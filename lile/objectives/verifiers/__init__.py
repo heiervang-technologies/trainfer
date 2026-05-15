@@ -98,3 +98,13 @@ try:
     from lile.teach.arc_agi_3 import verifier as _arc  # noqa: F401, E402
 except Exception:  # pragma: no cover — defensive; teach package is in-tree
     pass
+
+# HumanEval verifier — wraps evalplus check_correctness in a fork-context
+# child for sandboxed test execution. Importing here triggers the
+# ``@register("humaneval")`` decorator. Wrapped in try/except because
+# evalplus is an opt-in extra: slim environments (cpu_only test runs,
+# torchless smoke) can still load the registry without it.
+try:
+    from . import _humaneval  # noqa: F401, E402
+except Exception:  # pragma: no cover — defensive; evalplus is an extra
+    pass
