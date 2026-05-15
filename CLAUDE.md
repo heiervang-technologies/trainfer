@@ -18,7 +18,7 @@ This repository hosts **lile**, the LiveLearn local LLM daemon. lile was relocat
 lile depends on `unsloth` from the heiervang fork:
 
 ```
-unsloth @ git+https://github.com/heiervang-technologies/ht-unsloth@53757129
+unsloth @ git+https://github.com/heiervang-technologies/ht-unsloth@ht-2026-05-15
 ```
 
 (see [`pyproject.toml`](pyproject.toml)). Bump intentionally when ht-unsloth syncs with upstream — the load-bearing coupling is the runtime monkeypatch in `lile/state.py:55-77` of `unsloth.kernels.utils.matmul_lora`, guarded by `LileMatmulRebindError` on signature drift.
