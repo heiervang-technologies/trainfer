@@ -1,0 +1,127 @@
+# Auto-tag configuration
+# This file defines rules for automatically tagging issues based on their content
+# Inspired by HuggingFace Transformers repository
+
+rules:
+  # Bug reports
+  - labels:
+      - bug
+    patterns:
+      - bug
+      - error
+      - issue
+      - broken
+      - not work
+      - doesn't work
+      - does not work
+      - fails
+      - failing
+      - failed
+      - crash
+      - exception
+      - traceback
+    case_sensitive: false
+
+  # Feature requests and enhancements
+  - labels:
+      - feature
+      - enhancement
+    patterns:
+      - feature request
+      - enhancement
+      - improve
+      - add support
+      - would be nice
+      - could we
+      - can we add
+      - new feature
+      - implement
+    case_sensitive: false
+
+  # Documentation
+  - labels:
+      - documentation
+    patterns:
+      - docs
+      - documentation
+      - readme
+      - guide
+      - tutorial
+      - example
+      - docstring
+    case_sensitive: false
+
+  # Questions
+  - labels:
+      - question
+    patterns:
+      - how to
+      - how can
+      - how do
+      - how does
+      - what is
+      - why does
+      - question
+    case_sensitive: false
+
+  # Performance issues
+  - labels:
+      - performance
+    patterns:
+      - slow
+      - performance
+      - optimize
+      - optimization
+      - speed
+      - memory
+      - latency
+      - throughput
+    case_sensitive: false
+
+  # Security
+  - labels:
+      - security
+    patterns:
+      - security
+      - vulnerability
+      - cve
+      - exploit
+      - xss
+      - injection
+      - authentication
+    case_sensitive: false
+
+  # Testing
+  - labels:
+      - testing
+    patterns:
+      - test
+      - tests
+      - testing
+      - unit test
+      - integration test
+    case_sensitive: false
+
+  # CI/CD
+  - labels:
+      - ci/cd
+    patterns:
+      - ci
+      - cd
+      - continuous integration
+      - continuous deployment
+      - workflow
+      - action
+      - pipeline
+    case_sensitive: false
+
+  # Dependencies
+  - labels:
+      - dependencies
+    patterns:
+      - dependency
+      - dependencies
+      - package
+      - upgrade
+      - update dependency
+    case_sensitive: false
