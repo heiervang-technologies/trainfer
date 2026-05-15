@@ -31,6 +31,7 @@ Honest live record of what is done, what is stubbed, and what is tested. Read `D
 | `bench_rc_ranking.py` (Qwen3-8B, N=20, k=6) | §11 ranking-reliability benchmark on a text-only 7–14B model | **Spearman mean +0.207**, median +0.319, 60% positive — **decision: `ship_T2_1_k8_with_hinge_primary`** |
 | `bench_rc_ranking.py` (Qwen3-0.6B, N=20, k=6) | §11 benchmark on the small tests model — matched-k comparison vs the 8B run | **Spearman mean +0.231**, median +0.393, 65% positive — **decision: `ship_T2_1_k8_with_hinge_primary`** |
 | `bench_rc_ranking.py` (Qwen3-0.6B, N=20, k=8) | §11 benchmark at higher k; kept as secondary data point after the matched-k rerun | Spearman mean +0.183, median +0.247, 57.5% positive — **decision: `fallback_to_sft_self_refinement`** |
+| `r001_memorize_retention.py` (R-001 + R-001b, 3 arms) | Memorize-via-greedy-SFT retention under sequential insertion — weak, strong, and low-threshold regimes at n=100 on Qwen3-8B-bnb-4bit | **INVARIANT: pair0 never drops below baseline across any regime** — R-001 weak: pair0 0.78→1.00 (mean 0.95); R-001b strong (2.4× steps, lr=5e-4): pair0 0.56→0.89 (mean 0.87); R-001b low-thresh (t=0.7): pair0 0.56→0.89 (mean 0.85). [JOURNAL: glm entry](../../lile/docs/research/JOURNAL.md#2026-05-15--r-001--memorize-retention--glm), [JOURNAL: kimi entry](../../lile/docs/research/JOURNAL.md#2026-05-15--r-001b--memorize-retention-stronger--kimi) |
 
 ## §11 benchmark — the decision
 
