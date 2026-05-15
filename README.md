@@ -1,190 +1,59 @@
-# Snail Core Template
+# agi — lile
 
-Template repository for setting up a Snail AI agent on your GitHub repository.
+Dedicated repository for **lile**, the LiveLearn local LLM daemon.
 
-## Quick Start
+> One mutable model. Always serving. Always trainable. Any objective, any time, via API.
 
-1. **Create a new repository from this template**
-   - Click the green "Use this template" button above
-   - Choose a name for your repository
-   - Click "Create repository"
+`lile` is a single-process FastAPI daemon that shares weights between inference and training, so feedback you send can land on the next inference request under a *typed* contract (not a best-effort). It is the load-bearing addition that used to live inside [`heiervang-technologies/ht-unsloth`](https://github.com/heiervang-technologies/ht-unsloth) and now lives here.
 
-2. **Configure your credentials**
-   - After creation, a GitHub issue will automatically be created with setup instructions
-   - Follow the instructions in that issue to configure the required secrets
+See [`lile/README.md`](lile/README.md) for the full project README, [`lile/DESIGN.md`](lile/DESIGN.md) for the architecture, and [`lile/PLAN.md`](lile/PLAN.md) for the roadmap.
 
-3. **Customize your agent**
-   - Edit `.github/workflows/mention-trigger.yml` to change:
-     - `mention_handle` from `marksverdhai` to your agent's username
-     - `agent_name` to match your agent's username
-   - Edit `.github/workflows/assignment-trigger.yml` (if using assignments):
-     - Update the `if` condition assignee filter to match your agent's username
-     - Update `agent_name` parameter
-
-4. **Test your agent**
-   - **Via mention**: Create an issue and mention your agent (e.g., `@your-agent help me with...`)
-   - **Via assignment**: Assign an issue or PR to your agent
-   - The agent should respond within a few minutes
-
-## Required Secrets
-
-These are provided as organization secrets in heiervang-technologies and automatically inherited via `secrets: inherit`:
-
-| Secret | Description |
-|--------|-------------|
-| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code OAuth token for authentication |
-| `HEI_DOCKER_PAT` or `DOCKER_PAT` | Docker Hub PAT for pulling snail images |
-| `HAI_GH_PAT` or `GH_PAT` | GitHub Personal Access Token with `repo` and `workflow` scopes |
-
-For other organizations, you'll need to configure these secrets at the organization or repository level.
-
-## Included Workflows
-
-### Mention Trigger (`mention-trigger.yml`)
-
-Triggers the snail agent when mentioned in:
-- Issue bodies (when issue is opened)
-- Issue comments
-- Pull request review comments
-
-**Key features:**
-- Uses the reusable `mention-trigger-reusable.yml` workflow from `heiervang-technologies/core`
-- Automatically posts progress tracking comments
-- Adds reaction emojis (eyes while processing, rocket on success)
-
-### Assignment Trigger (`assignment-trigger.yml`)
-
-Triggers the snail agent when issues or PRs are assigned to the agent's GitHub account.
-
-**Key features:**
-- Progress tracking with visual indicators
-- Automatic PR creation instructions embedded in prompt
-- Support for both issues and pull requests
-- PR status emoji system (🔵 in-progress, 🟢 ready, etc.)
-
-### Setup Check (`setup-check.yml`)
-
-Automatically runs on first push to verify:
-- Required secrets are configured
-- PAT has sufficient repository permissions
-- Claude credentials are valid
-
-Creates an issue with detailed setup instructions if anything is missing.
-
-## How It Works
+## Layout
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Your Repository                              │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│   @agent help me fix this bug                                        │
-│         │                                                            │
-│         ▼                                                            │
-│   ┌─────────────────────┐                                            │
-│   │ mention-trigger.yml │                                            │
-│   └──────────┬──────────┘                                            │
-│              │                                                       │
-│              │ Uses reusable workflow                                │
-│              ▼                                                       │
-│   ┌─────────────────────────────────────────────────────────────┐   │
-│   │           heiervang-technologies/core                        │   │
-│   │         mention-trigger-reusable.yml                         │   │
-│   │                     │                                        │   │
-│   │                     ▼                                        │   │
-│   │               spawn-agent.yml                                │   │
-│   │                                                              │   │
-│   │   ┌─────────────┐     ┌─────────────┐     ┌────────────┐    │   │
-│   │   │ Pull snail  │────▶│ Run Claude  │────▶│ Post       │    │   │
-│   │   │ container   │     │ in container│     │ results    │    │   │
-│   │   └─────────────┘     └─────────────┘     └────────────┘    │   │
-│   └─────────────────────────────────────────────────────────────┘   │
-│                                                                      │
-└─────────────────────────────────────────────────────────────────────┘
+lile/                    # the daemon — server, training engine, objectives, queue, state
+lile/console/            # web console (launch.py, dashboard.html, metrics.html, …)
+lile/teach/              # offline teachers + RLVR loop + ARC-AGI-3 runner + eval harness
+lile/tests/              # pytest suite (cpu_only + gpu markers)
+compose.lile-dev.yaml    # dev-mode docker compose (daemon + studio)
+.claude/skills/lile/     # Claude Code skill for working in this repo
+pyproject.toml           # lile package + cross-repo unsloth dep
 ```
 
-## Latest Updates (January 2026)
+## Cross-repo dependency
 
-This template has been updated to use the latest patterns from the core repository:
+lile consumes [`unsloth`](https://github.com/heiervang-technologies/ht-unsloth) (the heiervang fork) as a pinned git dependency. The single load-bearing coupling is a runtime monkeypatch of `unsloth.kernels.utils.matmul_lora` in [`lile/state.py`](lile/state.py); `LileMatmulRebindError` guards against upstream signature drift.
 
-✅ **Mention trigger** now uses reusable workflow (`mention-trigger-reusable.yml`)
-✅ **Assignment trigger** updated with latest progress tracking system
-✅ **Spinner animations** in progress comments (instead of static emojis)
-✅ **secrets: inherit** for cleaner secret management
-✅ **Progress bar** with percentage completion
-✅ **PR emoji system** for status tracking (🔵🟢🟡🔴🟣)
+The HTTP-side companion (Studio frontend + `studio/backend/routes/lile.py` proxy) lives in `ht-unsloth` and talks to the lile daemon over `LILE_DAEMON_URL`.
 
-## Customization
+## Quickstart
 
-### Change the Agent Username
-
-In `.github/workflows/mention-trigger.yml`:
-```yaml
-with:
-  mention_handle: 'your-agent-username'  # Change this
-  agent_name: 'your-agent-username'       # Change this
+```bash
+pip install -e .
+python -m lile.console.launch    # default: Qwen3-8B on :8768
 ```
 
-In `.github/workflows/assignment-trigger.yml`:
-```yaml
-if: |
-  github.event.assignee.login == 'your-agent-username' &&  # Change this
-  (github.event.sender.login == 'your-human-username' || github.event.sender.login == 'your-agent-username')
+```bash
+# OpenAI-compatible chat
+curl -sS http://127.0.0.1:8768/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hi"}],"max_tokens":64}' | jq
+
+# Train in the same process — returns commit_token N
+curl -sS http://127.0.0.1:8768/v1/train \
+  -H 'content-type: application/json' \
+  -d '{"objective":"sft","samples":[{"prompt":"2+2?","response":"4."}]}' | jq
+
+# Next chat that MUST see batch N
+curl -sS http://127.0.0.1:8768/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"messages":[{"role":"user","content":"2+2?"}],"after_commit_token":N}' | jq
 ```
 
-And:
-```yaml
-with:
-  agent_name: 'your-agent-username'  # Change this
+## Tests
+
+```bash
+pytest -m cpu_only           # no GPU required
+pytest                       # full suite (GPU needed)
+pytest -m "eval"             # eval harness (install with `pip install -e .[eval]`)
 ```
-
-### Use a Different Snail Image
-
-By default, the template uses `marksverdhei/snail:builder`. To use a different image:
-
-In `.github/workflows/mention-trigger.yml`:
-```yaml
-with:
-  snail_image_default: 'your-registry/your-image:tag'
-```
-
-## Troubleshooting
-
-### "Setup Required" issue keeps appearing
-
-- Ensure all three secrets are available (org secrets or repo secrets)
-- Verify the `HAI_GH_PAT` (or `GH_PAT`) has `repo` and `workflow` scopes
-- Check that the PAT belongs to an account with write access to the repo
-
-### Agent doesn't respond to mentions
-
-1. Check the Actions tab for workflow runs
-2. Look for errors in the workflow logs
-3. Verify the agent username matches what's in the workflow file (`mention_handle` parameter)
-4. Ensure the PAT hasn't expired
-
-### Agent doesn't respond to assignments
-
-1. Verify the assignee filter in `assignment-trigger.yml` matches your agent's username
-2. Check that you're assigning to the correct GitHub account
-3. Look at the Actions tab to see if the workflow was triggered
-
-### Authentication errors
-
-If you see "authentication error" in the workflow logs:
-- Your Claude OAuth token may have expired
-- Refresh the `CLAUDE_CODE_OAUTH_TOKEN` secret with a new token from Claude Code
-
-### Progress tracking not updating
-
-- Ensure the agent has the progress comment ID
-- Check workflow logs for API errors
-- Verify `GITHUB_TOKEN` has sufficient permissions
-
-## Contributing
-
-This template is maintained as part of the [heiervang-technologies/core](https://github.com/heiervang-technologies/core) project. For issues or improvements, please open an issue in the core repository.
-
-## License
-
-MIT
