@@ -2,7 +2,7 @@
 
 **One mutable model. Always serving. Always trainable. Any objective, any time, via API.**
 
-`lile` is a single-process FastAPI daemon that shares weights between inference and training, so feedback you send can land on the next inference request under a *typed* contract (not a best-effort). It's built on top of ht-unsloth and is the load-bearing addition in this fork.
+`lile` is a single-process FastAPI daemon that shares weights between inference and training, so feedback you send can land on the next inference request under a *typed* contract (not a best-effort). It is built on top of [`heiervang-technologies/ht-unsloth`](https://github.com/heiervang-technologies/ht-unsloth), which it consumes as a pinned git dependency — see [`../pyproject.toml`](../pyproject.toml).
 
 ```bash
 # Start the daemon — Qwen3.5-9B on :8768 by default (LILE_PORT to override)
@@ -32,7 +32,7 @@ curl -sS http://127.0.0.1:8768/v1/chat/completions \
 
 The response body's `lile.commit_cursor` is guaranteed ≥ `after_commit_token`. That's the "post a batch, next inference sees it" promise as a contract.
 
-From Studio, start the daemon as a *capsule* instead: open the `/lile` page → **Load** → pick a model. Studio proxies `/v1/*` through `studio/backend/routes/lile.py` with lifecycle management.
+From Studio (in the `ht-unsloth` repo), start the daemon as a *capsule* instead: open the `/lile` page → **Load** → pick a model. Studio proxies `/v1/*` through its `studio/backend/routes/lile.py` to a daemon at `LILE_DAEMON_URL`, which Studio expects you to start from this repo (`python -m lile.console.launch`). Studio no longer spawns the daemon itself since the 2026-05-15 relocation.
 
 ## Start here
 
@@ -46,7 +46,7 @@ From Studio, start the daemon as a *capsule* instead: open the `/lile` page → 
 | **[console/README.md](console/README.md)** | …how to poke a running daemon from the browser (demo chat + dashboard + live Prometheus graphs). |
 | **[docs/research/](docs/research/)** | …PR specs, proofs (Razin, unlike trajectory bound), surveys, research roadmap. |
 
-For Studio integration (the `/lile` page, feedback modal, live charts), see [`studio/frontend/src/features/lile/`](../studio/frontend/src/features/lile/) and [`studio/backend/routes/lile.py`](../studio/backend/routes/lile.py).
+For Studio integration (the `/lile` page, feedback modal, live charts), see [`studio/frontend/src/features/lile/`](https://github.com/heiervang-technologies/ht-unsloth/tree/ht/studio/frontend/src/features/lile) and [`studio/backend/routes/lile.py`](https://github.com/heiervang-technologies/ht-unsloth/blob/ht/studio/backend/routes/lile.py) in the `ht-unsloth` repo.
 
 ## HTTP surface (summary)
 
@@ -114,4 +114,4 @@ Override ports with `LILE_PORT` (upstream) and `LILE_PROXY_PORT` (proxy).
 
 ## License
 
-Same as the parent `ht-unsloth` repo (Apache 2.0 for the Unsloth-derived parts; AGPL-3.0 for `studio/` — see `studio/LICENSE.AGPL-3.0`). `lile/` itself is Apache 2.0.
+Apache 2.0 — see [`LICENSE`](../LICENSE) at the repo root. The Studio frontend that talks to lile lives in `ht-unsloth` and is AGPL-3.0 there; the lile daemon itself imposes no such restriction on consumers using its HTTP API.

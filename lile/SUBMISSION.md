@@ -108,7 +108,7 @@ Full reviews (scoring, what I'd replace, what they got right that I missed) live
 ## Repro one-liner
 
 ```bash
-cd /home/me/ht/forks/ht-unsloth/.worktrees/lile-opus4.7 && \
+cd "$(git rev-parse --show-toplevel)" && \
 python -m lile.tests.test_queue_cursor && \
 python -m lile.tests.test_trajectory_snapshot && \
 python -m lile.tests.smoke_objectives && \

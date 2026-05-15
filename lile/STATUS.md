@@ -105,7 +105,7 @@ Per-item range on 8B: `min −0.600, max +1.000`. Format/length critiques ("sing
 
 ## Reproducing the evidence
 
-From `/home/me/ht/forks/ht-unsloth/.worktrees/lile-opus4.7`, with the unsloth venv active:
+From the repo root, with a venv that has `pip install -e .` applied:
 
 ```bash
 # Unit + invariant tests (no GPU, ~0.5 s each)

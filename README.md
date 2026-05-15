@@ -6,7 +6,16 @@ Dedicated repository for **lile**, the LiveLearn local LLM daemon.
 
 `lile` is a single-process FastAPI daemon that shares weights between inference and training, so feedback you send can land on the next inference request under a *typed* contract (not a best-effort). It is the load-bearing addition that used to live inside [`heiervang-technologies/ht-unsloth`](https://github.com/heiervang-technologies/ht-unsloth) and now lives here.
 
-See [`lile/README.md`](lile/README.md) for the full project README, [`lile/DESIGN.md`](lile/DESIGN.md) for the architecture, and [`lile/PLAN.md`](lile/PLAN.md) for the roadmap.
+## Where to look first
+
+| You want to… | Read |
+|---|---|
+| Get the daemon running | [`OPERATING.md`](OPERATING.md) — env vars, ports, data layout, smoke test |
+| Understand what lile does and why | [`lile/PLAN.md`](lile/PLAN.md) (north-star spec) + [`lile/DESIGN.md`](lile/DESIGN.md) (one-pager) |
+| See what's actually shipped | [`lile/STATUS.md`](lile/STATUS.md) — every claim is cited by a test |
+| Learn the in-house vocabulary | [`lile/GLOSSARY.md`](lile/GLOSSARY.md) |
+| Migrate from a ht-unsloth checkout | [`MIGRATION.md`](MIGRATION.md) |
+| Touch the daemon HTTP surface | [`lile/README.md`](lile/README.md) |
 
 ## Layout
 

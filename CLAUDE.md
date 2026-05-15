@@ -10,6 +10,8 @@ This repository hosts **lile**, the LiveLearn local LLM daemon. lile was relocat
 - `lile/tests/` — pytest suite. `cpu_only` marker for torchless tests; `gpu` marker for real-model tests; `eval` marker for `lile.teach.eval` harness.
 - `compose.lile-dev.yaml` — dev compose (daemon + studio).
 - `.claude/skills/lile/SKILL.md` — Claude Code skill that codifies house style and invariants for this codebase. **Read it before doing non-trivial work in `lile/`.**
+- `OPERATING.md` — env vars, ports, data layout, snapshot lifecycle, cross-repo policy.
+- `MIGRATION.md` — what moved from ht-unsloth on 2026-05-15, what stayed, what downstream consumers need to change.
 
 ## Cross-repo dependency
 

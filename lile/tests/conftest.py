@@ -143,3 +143,22 @@ if _missing("torch"):
             "Fix: add each file to _TORCHLESS_OK (if it really is stdlib-only) "
             "or drop the cpu_only marker (if it needs torch to run)."
         )
+elif _missing("unsloth"):
+    # torch is available but unsloth is not — common for smoke tests and
+    # quick-iteration CI that wants to run the cpu_only suite without
+    # paying for the heavy unsloth git+ dep.
+    #
+    # We skip every test file that names ``unsloth`` at module scope (the
+    # cpu_only-marked ones already use lazy imports for unsloth-touching
+    # code paths, so they pass). The probe is a plain text search instead
+    # of an AST walk — fast, and false positives only cost a missed test,
+    # not silent wrong behavior.
+    here = Path(__file__).parent
+    for p in here.glob("test_*.py"):
+        text = p.read_text(encoding="utf-8")
+        first_func = text.find("\ndef ")
+        if first_func == -1:
+            first_func = len(text)
+        head = text[:first_func]
+        if "import unsloth" in head or "from unsloth" in head:
+            collect_ignore_glob.append(p.name)
