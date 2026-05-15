@@ -54,15 +54,17 @@ Override the directory at the config layer (`ServeConfig(data_dir=...)`) or via 
 lile pins `unsloth` to a specific commit on the heiervang fork:
 
 ```toml
-unsloth @ git+https://github.com/heiervang-technologies/ht-unsloth@<sha>
+unsloth @ git+https://github.com/heiervang-technologies/ht-unsloth@<tag>
 ```
 
-(see [`pyproject.toml`](pyproject.toml)).
+(see [`pyproject.toml`](pyproject.toml)). Current pin: `ht-2026-05-15`.
+
+**Tag cadence (tied to upstream-sync).** ht-unsloth cuts a tag named `ht-YYYY-MM-DD` after every successful rebase of `ht` onto upstream Unsloth's `main` — that boundary is the natural "stable point" where upstream just shipped a compatible state, our patches replay clean, CI is green. agi bumps its pin on the same beat. Expected cadence: 2–4 weeks when upstream is hot (Gemma releases, transformers point releases), 6–8 weeks when quiet. Goal: agi never lives more than one tag behind the last upstream-compatible point.
 
 **When to bump the pin:**
-1. ht-unsloth rebases on upstream Unsloth and merges into `ht`. Confirm `matmul_lora`'s signature still matches `_EXPECTED_MATMUL_LORA_PARAMS` in [`lile/state.py`](lile/state.py:60) — if it drifted, the signature-guard test (`lile/tests/test_matmul_lora_patch.py::test_signature_mismatch_skips_install`) is the canary.
-2. ht-unsloth cuts a release tag. Prefer `@<tag>` over `@<sha>` for readability once one exists.
-3. Never `@ht` or `@main` in the pin — those are moving refs and break reproducibility.
+1. ht-unsloth pushes a new `ht-YYYY-MM-DD` tag. Confirm `matmul_lora`'s signature still matches `_EXPECTED_MATMUL_LORA_PARAMS` in [`lile/state.py`](lile/state.py:60) — if it drifted, the signature-guard test (`lile/tests/test_matmul_lora_patch.py::test_signature_mismatch_skips_install`) is the canary.
+2. Open a one-line PR bumping the `@<tag>` reference in `pyproject.toml` + `CLAUDE.md`. Keep `MIGRATION.md` at the historical SHA — that doc records what was current at relocation time, not the moving pin.
+3. Never `@ht` or `@main` in the pin — those are moving refs and break reproducibility. Always a tagged name (`ht-YYYY-MM-DD`) or, in emergencies, a frozen SHA.
 
 Bumping is a deliberate two-PR dance: (1) PR in `ht-unsloth` lands the upstream sync, (2) PR in `agi` bumps the pin and runs the full GPU test suite against the new combination.
 
