@@ -55,6 +55,7 @@ For Studio integration (the `/lile` page, feedback modal, live charts), see [`st
 | `POST /v1/chat/completions` | OpenAI-compatible chat (streaming + non-streaming). Accepts `after_commit_token` to block on a training commit. Returns `lile.{response_id, commit_cursor, latency_s}`. |
 | `POST /v1/train` | Enqueue a training batch. Request body: `{objective, samples[], ...objective-specific params}`. Returns `commit_token`. |
 | `POST /v1/train/memorize` | Greedy-memorize a single `(prompt, response)` pair via the `lile.memorize` SFT-until-greedy-matches loop. Returns `commit_token` and the final greedy-rank fraction. Used by the chat UI's implicit-OK auto-SFT flow and by the R-001..R-004 research items. |
+| `POST /v1/eval/greedy_rank` | Evaluate greedy-rank fraction on a `(prompt, response)` pair under current weights, serialized through the compute queue so the returned commit_cursor is meaningful. Returns `{fraction, matched, total, commit_token}`. Research use (R-001..R-004). |
 | `POST /v1/feedback` | Route feedback (`binary`, `rewrite`, `preferred`, `nl_critique`) on a prior `response_id` to the matching objective (KTO / weighted SFT / hinge / CoH or CCPD v2). Returns `commit_token`. |
 | `POST /v1/wait` | Block until a given commit_token is applied. |
 | `GET  /v1/state/trajectory/tail?limit=N` | Paginated JSONL trajectory events (`train_step`, `inference`, `feedback`, `eval_point`, …). Drives live dashboards. |

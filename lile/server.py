@@ -133,6 +133,19 @@ class MemorizeRequest(BaseModel):
     plateau_patience: int = 3
 
 
+class EvalGreedyRankRequest(BaseModel):
+    """Body for POST /v1/eval/greedy_rank.
+
+    Runs a single forward on (prompt, response) under the current model
+    weights and returns the greedy-rank fraction: what fraction of response
+    tokens are argmax of the model's logits.  Used by the research loop
+    (R-001..R-004) to probe retention on previously memorized facts without
+    triggering a training step.
+    """
+    prompt: str
+    response: str
+
+
 # ---------------------------------------------------------------------- app
 def create_app(cfg: ServeConfig | None = None) -> FastAPI:
     cfg = cfg or ServeConfig()
@@ -405,6 +418,12 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
             weight=req.weight,
             plateau_patience=req.plateau_patience,
         )
+
+    # --------------------------------------------------------------- eval
+    @app.post("/v1/eval/greedy_rank")
+    async def eval_greedy_rank(req: EvalGreedyRankRequest) -> dict[str, Any]:
+        c: Controller = app.state.controller
+        return await c.submit_eval_greedy_rank(req.prompt, req.response)
 
     # --------------------------------------------------------------- feedback
     @app.post("/v1/feedback")

@@ -265,6 +265,34 @@ class Controller:
             # weights. Drop the optimizer so the next train step rebuilds fresh.
             self.train_engine.reset_optimizer()
             return {"loaded": name, "manifest": manifest, "wall": time.time() - t0}
+        elif kind == "eval_greedy_rank":
+            from .memorize import greedy_rank_fraction
+            prompt = payload["prompt"]
+            response = payload["response"]
+            with self.state.mode_lock:
+                frac, matched, total = greedy_rank_fraction(
+                    self.state.model,
+                    self.state.tokenizer,
+                    prompt,
+                    response,
+                )
+            try:
+                from . import metrics as metrics_mod  # noqa: PLC0415
+                metrics_mod.record_eval_greedy_rank()
+            except Exception as exc:  # pragma: no cover
+                log.warning("metrics record_eval_greedy_rank failed: %s", exc)
+            self.trajectory.log_event("eval_point", {
+                "prompt": prompt,
+                "response": response,
+                "fraction": float(frac),
+                "matched": int(matched),
+                "total": int(total),
+                "model_fingerprint": self.state.residual_fingerprint()[:16],
+                "commit_token": task.token,
+            })
+            wall = time.time() - t0
+            return {"fraction": frac, "matched": matched, "total": total,
+                    "wall": wall}
         elif kind == "reset_adapter":
             self.state.reset_active_adapter()
             return {"ok": True, "wall": time.time() - t0}
@@ -634,3 +662,24 @@ class Controller:
         task = await self.queue.submit("snapshot_load", {"name": name})
         result = await self.queue.wait_for(task.token, timeout=300.0)
         return {"commit_token": task.token, "result": result.result}
+
+    async def submit_eval_greedy_rank(self, prompt: str, response: str) -> dict[str, Any]:
+        """Serialize a greedy-rank eval through the compute queue so that the
+        returned commit_cursor is meaningful — all training steps submitted before
+        this call are guaranteed committed before the forward runs."""
+        self._reject_if_shutting_down()
+        task = await self.queue.submit("eval_greedy_rank", {
+            "prompt": prompt,
+            "response": response,
+        })
+        result = await self.queue.wait_for(task.token, timeout=300.0)
+        # Unpack the result or surface an error so HTTP callers get a 500.
+        if result.error:
+            raise result.error
+        r = result.result or {}
+        return {
+            "commit_token": task.token,
+            "fraction": r.get("fraction", 0.0),
+            "matched": r.get("matched", 0),
+            "total": r.get("total", 0),
+        }

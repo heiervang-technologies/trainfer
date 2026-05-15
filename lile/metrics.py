@@ -86,6 +86,12 @@ _REPLAY_ENQUEUED = Counter(
     registry=REGISTRY,
 )
 
+_EVAL_GREEDY_RANK = Counter(
+    "lile_eval_greedy_rank_total",
+    "Evaluations of greedy rank fraction via /v1/eval/greedy_rank.",
+    registry=REGISTRY,
+)
+
 
 # ---------------------------------------------------------------- histograms
 
@@ -358,6 +364,11 @@ def record_generate_latency(*, stream: bool, latency_s: float) -> None:
     _GENERATE_LATENCY.labels(stream="true" if stream else "false").observe(
         latency_s, exemplar=_exemplar(),
     )
+
+
+def record_eval_greedy_rank() -> None:
+    """Bump `lile_eval_greedy_rank_total`."""
+    _EVAL_GREEDY_RANK.inc()
 
 
 # ---------------------------------------------------------------- middleware
