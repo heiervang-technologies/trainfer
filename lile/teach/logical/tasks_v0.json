@@ -1,0 +1,261 @@
+{
+  "version": "v0",
+  "created": "2026-05-15",
+  "schema": {
+    "task_id": "stable string id",
+    "domain": "one of: prop_logic | syllogism | arith | sequence | set_ops | bool_eval | kinship | parity | counting | ordering",
+    "prompt": "user-facing question; should instruct the model to produce the final answer in the form 'Answer: <value>'",
+    "expected": "canonical answer used for verification",
+    "compare": "exact | numeric | set | bool | regex",
+    "extract": "regex with one capturing group; matched against the model output; the captured group is compared to expected per compare-mode. Default: '(?is)Answer\\s*[:=]\\s*([^\\n]+)'",
+    "difficulty": "easy | medium | hard",
+    "notes": "optional context for graders"
+  },
+  "tasks": [
+    {
+      "task_id": "logical/prop_logic/0",
+      "domain": "prop_logic",
+      "prompt": "Is the statement '(P AND NOT P)' a tautology, contradiction, or contingent? End your reply with: Answer: <tautology|contradiction|contingent>.",
+      "expected": "contradiction",
+      "compare": "exact",
+      "difficulty": "easy"
+    },
+    {
+      "task_id": "logical/prop_logic/1",
+      "domain": "prop_logic",
+      "prompt": "Is the statement '(P OR NOT P)' a tautology, contradiction, or contingent? End your reply with: Answer: <tautology|contradiction|contingent>.",
+      "expected": "tautology",
+      "compare": "exact",
+      "difficulty": "easy"
+    },
+    {
+      "task_id": "logical/prop_logic/2",
+      "domain": "prop_logic",
+      "prompt": "Given P=true, Q=false, evaluate ((P OR Q) AND NOT (P AND Q)). End your reply with: Answer: <true|false>.",
+      "expected": "true",
+      "compare": "bool",
+      "difficulty": "medium"
+    },
+    {
+      "task_id": "logical/syllogism/0",
+      "domain": "syllogism",
+      "prompt": "Premises: All cats are mammals. All mammals are animals. Does it follow that all cats are animals? End your reply with: Answer: <yes|no>.",
+      "expected": "yes",
+      "compare": "exact",
+      "difficulty": "easy"
+    },
+    {
+      "task_id": "logical/syllogism/1",
+      "domain": "syllogism",
+      "prompt": "Premises: Some birds can fly. Penguins are birds. Does it follow that penguins can fly? End your reply with: Answer: <yes|no>.",
+      "expected": "no",
+      "compare": "exact",
+      "difficulty": "medium",
+      "notes": "Tests undistributed middle — quantifier over birds is partial."
+    },
+    {
+      "task_id": "logical/syllogism/2",
+      "domain": "syllogism",
+      "prompt": "Premises: If it rains, the ground is wet. The ground is wet. Does it follow that it rained? End your reply with: Answer: <yes|no>.",
+      "expected": "no",
+      "compare": "exact",
+      "difficulty": "medium",
+      "notes": "Tests affirming the consequent."
+    },
+    {
+      "task_id": "logical/arith/0",
+      "domain": "arith",
+      "prompt": "A train travels 60 km in the first hour, then doubles its speed for the second hour. How many kilometers does it travel in 2 hours? End your reply with: Answer: <integer>.",
+      "expected": "180",
+      "compare": "numeric",
+      "difficulty": "easy"
+    },
+    {
+      "task_id": "logical/arith/1",
+      "domain": "arith",
+      "prompt": "Alice has 3 times as many apples as Bob. Together they have 28 apples. How many apples does Bob have? End your reply with: Answer: <integer>.",
+      "expected": "7",
+      "compare": "numeric",
+      "difficulty": "easy"
+    },
+    {
+      "task_id": "logical/arith/2",
+      "domain": "arith",
+      "prompt": "A rectangle has perimeter 22 and area 30. What is the length of its longer side? End your reply with: Answer: <integer>.",
+      "expected": "6",
+      "compare": "numeric",
+      "difficulty": "medium"
+    },
+    {
+      "task_id": "logical/sequence/0",
+      "domain": "sequence",
+      "prompt": "Sequence: 2, 4, 8, 16, ?. What is the next term? End your reply with: Answer: <integer>.",
+      "expected": "32",
+      "compare": "numeric",
+      "difficulty": "easy"
+    },
+    {
+      "task_id": "logical/sequence/1",
+      "domain": "sequence",
+      "prompt": "Sequence: 1, 1, 2, 3, 5, 8, ?. What is the next term? End your reply with: Answer: <integer>.",
+      "expected": "13",
+      "compare": "numeric",
+      "difficulty": "easy"
+    },
+    {
+      "task_id": "logical/sequence/2",
+      "domain": "sequence",
+      "prompt": "Sequence: 3, 6, 11, 18, 27, ?. What is the next term? End your reply with: Answer: <integer>.",
+      "expected": "38",
+      "compare": "numeric",
+      "difficulty": "medium",
+      "notes": "First differences: 3, 5, 7, 9, 11 — odd ascending."
+    },
+    {
+      "task_id": "logical/set_ops/0",
+      "domain": "set_ops",
+      "prompt": "Let A = {1, 2, 3, 4} and B = {3, 4, 5, 6}. List the elements of A intersect B, sorted ascending and comma-separated. End your reply with: Answer: <list>.",
+      "expected": "3,4",
+      "compare": "set",
+      "difficulty": "easy"
+    },
+    {
+      "task_id": "logical/set_ops/1",
+      "domain": "set_ops",
+      "prompt": "Let A = {1, 2, 3, 4} and B = {3, 4, 5, 6}. List the elements of A union B, sorted ascending and comma-separated. End your reply with: Answer: <list>.",
+      "expected": "1,2,3,4,5,6",
+      "compare": "set",
+      "difficulty": "easy"
+    },
+    {
+      "task_id": "logical/set_ops/2",
+      "domain": "set_ops",
+      "prompt": "Let A = {1, 2, 3, 4, 5} and B = {2, 4}. List the elements of A minus B (set difference), sorted ascending and comma-separated. End your reply with: Answer: <list>.",
+      "expected": "1,3,5",
+      "compare": "set",
+      "difficulty": "medium"
+    },
+    {
+      "task_id": "logical/bool_eval/0",
+      "domain": "bool_eval",
+      "prompt": "Given a=1, b=0, c=1, evaluate (a AND b) OR (c AND NOT b). End your reply with: Answer: <0|1>.",
+      "expected": "1",
+      "compare": "bool",
+      "difficulty": "easy"
+    },
+    {
+      "task_id": "logical/bool_eval/1",
+      "domain": "bool_eval",
+      "prompt": "Given p=true, q=true, r=false, evaluate (p AND (q OR r)) AND NOT (p AND r). End your reply with: Answer: <true|false>.",
+      "expected": "true",
+      "compare": "bool",
+      "difficulty": "medium"
+    },
+    {
+      "task_id": "logical/bool_eval/2",
+      "domain": "bool_eval",
+      "prompt": "Given x=false, y=true, z=false, evaluate (NOT (x OR y)) OR (y AND NOT z). End your reply with: Answer: <true|false>.",
+      "expected": "true",
+      "compare": "bool",
+      "difficulty": "medium"
+    },
+    {
+      "task_id": "logical/kinship/0",
+      "domain": "kinship",
+      "prompt": "Facts: Alice is Bob's mother. Bob is Carol's father. What is Alice's relationship to Carol? End your reply with: Answer: <one word>.",
+      "expected": "grandmother",
+      "compare": "exact",
+      "difficulty": "easy"
+    },
+    {
+      "task_id": "logical/kinship/1",
+      "domain": "kinship",
+      "prompt": "Facts: Dan is Eve's brother. Eve is Frank's mother. What is Dan's relationship to Frank? End your reply with: Answer: <one word>.",
+      "expected": "uncle",
+      "compare": "exact",
+      "difficulty": "easy"
+    },
+    {
+      "task_id": "logical/kinship/2",
+      "domain": "kinship",
+      "prompt": "Facts: Greta is Helga's daughter. Helga is Ivan's sister. Ivan is Jakob's father. How is Greta related to Jakob? End your reply with: Answer: <relationship>.",
+      "expected": "cousin",
+      "compare": "exact",
+      "difficulty": "medium"
+    },
+    {
+      "task_id": "logical/parity/0",
+      "domain": "parity",
+      "prompt": "If you sum the integers from 1 to 100 inclusive, is the result even or odd? End your reply with: Answer: <even|odd>.",
+      "expected": "even",
+      "compare": "exact",
+      "difficulty": "easy"
+    },
+    {
+      "task_id": "logical/parity/1",
+      "domain": "parity",
+      "prompt": "The product of 7 consecutive integers starting from 11 — is it even or odd? End your reply with: Answer: <even|odd>.",
+      "expected": "even",
+      "compare": "exact",
+      "difficulty": "easy"
+    },
+    {
+      "task_id": "logical/parity/2",
+      "domain": "parity",
+      "prompt": "If n is an odd integer, is n*(n+2)*(n+4) even or odd? End your reply with: Answer: <even|odd>.",
+      "expected": "odd",
+      "compare": "exact",
+      "difficulty": "medium"
+    },
+    {
+      "task_id": "logical/counting/0",
+      "domain": "counting",
+      "prompt": "How many distinct 3-letter strings can be formed from the letters A, B, C where each letter is used exactly once? End your reply with: Answer: <integer>.",
+      "expected": "6",
+      "compare": "numeric",
+      "difficulty": "easy"
+    },
+    {
+      "task_id": "logical/counting/1",
+      "domain": "counting",
+      "prompt": "A bag contains 3 red, 2 blue, and 1 green balls. In how many ways can you choose 2 balls of different colors? End your reply with: Answer: <integer>.",
+      "expected": "11",
+      "compare": "numeric",
+      "difficulty": "medium",
+      "notes": "3*2 + 3*1 + 2*1 = 6+3+2 = 11."
+    },
+    {
+      "task_id": "logical/counting/2",
+      "domain": "counting",
+      "prompt": "How many positive integers less than or equal to 20 are divisible by 3 or 5? End your reply with: Answer: <integer>.",
+      "expected": "9",
+      "compare": "numeric",
+      "difficulty": "medium",
+      "notes": "Inclusion-exclusion: 6 + 4 - 1 = 9."
+    },
+    {
+      "task_id": "logical/ordering/0",
+      "domain": "ordering",
+      "prompt": "Constraints: Alice is taller than Bob. Carol is shorter than Bob. Diana is taller than Alice. List the four names from tallest to shortest, comma-separated. End your reply with: Answer: <names>.",
+      "expected": "Diana,Alice,Bob,Carol",
+      "compare": "exact",
+      "difficulty": "easy"
+    },
+    {
+      "task_id": "logical/ordering/1",
+      "domain": "ordering",
+      "prompt": "Constraints: X finished before Y. Z finished after Y. W finished before X. List the four contestants in finishing order from first to last, comma-separated. End your reply with: Answer: <names>.",
+      "expected": "W,X,Y,Z",
+      "compare": "exact",
+      "difficulty": "easy"
+    },
+    {
+      "task_id": "logical/ordering/2",
+      "domain": "ordering",
+      "prompt": "Five people Alpha, Beta, Gamma, Delta, Epsilon are seated in a row. Beta is to the left of Gamma. Alpha is immediately to the right of Delta. Epsilon is at one end. Delta is to the right of Beta. The only seating from left to right consistent with all constraints is: ?. Comma-separated. End your reply with: Answer: <names>.",
+      "expected": "Beta,Gamma,Delta,Alpha,Epsilon",
+      "compare": "exact",
+      "difficulty": "hard"
+    }
+  ]
+}

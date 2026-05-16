@@ -88,6 +88,14 @@ def select(prompt: str) -> str | None:
 from . import _math  # noqa: F401, E402
 from . import _code  # noqa: F401, E402
 
+# Logical-task verifier — pinned corpus at lile/teach/logical/tasks_v0.json;
+# claims by prompt-hash so only catalogued prompts get routed here. Stdlib-
+# only (regex + json), safe to import in any environment.
+try:
+    from . import _logical  # noqa: F401, E402
+except Exception:  # pragma: no cover — defensive; teach package may be absent
+    pass
+
 # ARC-AGI-3 verifier lives in the teach/arc_agi_3 subpackage so the loader,
 # prompts, and runner stay co-located. Importing it here triggers the
 # ``@register("arc")`` decorator. Wrapped in a try/except because the lile
