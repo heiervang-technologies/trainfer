@@ -3,7 +3,7 @@ name: Auto-Rebase PRs on Main Update
 # Automatically rebases open PRs when main is updated
 # Uses the reusable workflow from core to keep things DRY
 #
-# IMPORTANT: For production use, replace @main with a specific version tag (e.g., @v1.9.1)
+# IMPORTANT: For production use, replace @main with a specific version tag (e.g., @v1.25.0)
 # to ensure stability and prevent breaking changes from affecting your workflow.
 
 on:
@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   auto-rebase:
-    uses: heiervang-technologies/core/.github/workflows/auto-rebase-reusable.yml@main
+    uses: heiervang-technologies/core/.github/workflows/auto-rebase-reusable.yml@v1.25.0
     with:
       base_branch: 'main'
       pr_number: ${{ inputs.pr_number }}

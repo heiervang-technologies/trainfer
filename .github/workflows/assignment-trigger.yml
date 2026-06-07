@@ -196,7 +196,7 @@ jobs:
 
   spawn-agent:
     needs: extract-context
-    uses: heiervang-technologies/core/.github/workflows/spawn-agent.yml@main
+    uses: heiervang-technologies/core/.github/workflows/spawn-agent.yml@v1.25.0
     with:
       prompt: ${{ needs.extract-context.outputs.prompt }}
       summary_title: 'Assignment Handler Results'

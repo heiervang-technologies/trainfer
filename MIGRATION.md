@@ -51,5 +51,4 @@ When bumping the unsloth pin in `pyproject.toml`, run that test against the new 
 
 - HT-CHANGELOG entry in ht-unsloth recording the relocation (owner: lile-architect).
 - Studio frontend lifecycle UI strings ("Load" / capsule-status pill) reworded from "starting daemon" to "checking daemon reachability" (owner: lile-architect).
-- Eventual ht release tag → re-pin agi's unsloth dep off the raw SHA.
 - Workflow `@main` → version tag pins on the heiervang-technologies/core reusable workflows used by `.github/workflows/`.

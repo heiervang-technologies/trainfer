@@ -3,7 +3,7 @@ name: Auto Tag Issues
 # Automatically tags issues when they are opened or edited based on content
 # Uses the reusable workflow from core to keep things DRY
 #
-# IMPORTANT: For production use, replace @main with a specific version tag (e.g., @v1.9.1)
+# IMPORTANT: For production use, replace @main with a specific version tag (e.g., @v1.25.0)
 # to ensure stability and prevent breaking changes from affecting your workflow.
 
 on:
@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   auto-tag:
-    uses: heiervang-technologies/core/.github/workflows/auto-tag-issues-reusable.yml@main
+    uses: heiervang-technologies/core/.github/workflows/auto-tag-issues-reusable.yml@v1.25.0
     with:
       issue_number: ${{ format('{0}', github.event.issue.number) }}
       issue_title: ${{ github.event.issue.title }}

@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   trigger-mention-response:
-    uses: heiervang-technologies/core/.github/workflows/mention-trigger-reusable.yml@main
+    uses: heiervang-technologies/core/.github/workflows/mention-trigger-reusable.yml@v1.25.0
     with:
       mention_handle: 'marksverdhai'
       agent_name: 'marksverdhai'
