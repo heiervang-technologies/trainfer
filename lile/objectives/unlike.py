@@ -229,8 +229,8 @@ def _pad_prefixes(tokenized: list[list[int]], pad_id: int) -> dict[str, torch.Te
 
 def unlike_loss(model: Any, tokenizer: Any, samples: list[dict[str, Any]],
                 positive_weight: float = 1.0,
-                default_rank_below: int | None = 5,
-                default_prob_above: float | None = 0.1,
+                default_rank_below: int | None = 20,
+                default_prob_above: float | None = 0.05,
                 eps: float = 1e-6,
                 allow_unanchored: bool = False,
                 batch_objectives: list[dict[str, Any]] | None = None,
