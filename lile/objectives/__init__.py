@@ -16,6 +16,8 @@ from .kl import kl_anchor_loss
 from .safety import safety_monitor_loss
 from .unlike import unlike_loss
 
+from .ccd import ccd_loss
+
 # Registry: objective_name -> loss_fn(model, batch, **kwargs) -> dict
 #
 # Each loss_fn returns a dict with:
@@ -31,6 +33,7 @@ OBJECTIVES: dict[str, Callable[..., dict[str, Any]]] = {
     "kl_anchor": kl_anchor_loss,
     "safety_monitor": safety_monitor_loss,
     "unlike": unlike_loss,
+    "ccd": ccd_loss,
 }
 
 # CCPD v2 is registered conditionally in objectives/ccpd.py if import succeeds.
