@@ -48,7 +48,6 @@ def generate_chat(model: Any, tokenizer: Any, messages: list[dict[str, str]],
         attn = attn.to(device)
 
     # Null-object pattern so callers that don't know about the lock still work.
-    import contextlib
     lock_cm = mode_lock if mode_lock is not None else contextlib.nullcontext()
 
     with lock_cm:

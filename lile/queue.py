@@ -142,7 +142,7 @@ class ComputeQueue:
                 if asyncio.iscoroutine(result):
                     result = await result
                 task.result = result
-            except BaseException as e:
+            except Exception as e:
                 log.exception("queue task %d (%s) failed", task.token, task.kind)
                 task.error = e
             finally:

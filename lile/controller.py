@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -57,6 +58,10 @@ class Controller:
         self._response_index: "collections.OrderedDict[str, dict[str, Any]]" = (
             collections.OrderedDict()
         )
+        # Protects _response_index from concurrent generate() calls in the
+        # thread pool. OrderedDict is not thread-safe for interleaved
+        # __setitem__ + popitem. See review finding C-7.
+        self._response_lock = threading.Lock()
 
         # T4.1 idle replay; instantiated in start() once state is loaded.
         self._replay: IdleReplayScheduler | None = None
@@ -456,11 +461,12 @@ class Controller:
     def _remember_response(self, rid: str, messages: list[dict[str, str]],
                            response_text: str) -> None:
         """O(1) insertion + LRU eviction via OrderedDict."""
-        self._response_index[rid] = {
-            "messages": messages, "response": response_text, "ts": time.time(),
-        }
-        while len(self._response_index) > _RESPONSE_INDEX_CAP:
-            self._response_index.popitem(last=False)
+        with self._response_lock:
+            self._response_index[rid] = {
+                "messages": messages, "response": response_text, "ts": time.time(),
+            }
+            while len(self._response_index) > _RESPONSE_INDEX_CAP:
+                self._response_index.popitem(last=False)
 
     def _reject_if_shutting_down(self) -> None:
         if self._shutting_down:

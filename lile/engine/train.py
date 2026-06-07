@@ -80,6 +80,11 @@ class TrainEngine:
         # per-objective mode we drop every instance, not just one — snapshot
         # rewinds the shared weights that every optimizer's state is keyed to.
         self._opts.clear()
+        # Also clear the KTO z0 EMA — it carries drift info conditioned on
+        # the pre-snapshot weight trajectory, which is stale after a restore.
+        # See review finding C-3.
+        from ..objectives.kto import _Z0_EMA
+        _Z0_EMA.clear()
 
     def step(self, spec: dict[str, Any]) -> dict[str, Any]:
         """Execute one training step according to `spec`.
@@ -185,34 +190,46 @@ class TrainEngine:
 
             opt = self._optimizer(name)
             opt.zero_grad()
-            loss.backward()
-            grad_norm_total: float | None = None
-            if self.grad_clip and self.grad_clip > 0:
-                gn = torch.nn.utils.clip_grad_norm_(
-                    [p for p in self.state.model.parameters() if p.requires_grad],
-                    self.grad_clip,
-                )
-                grad_norm_total = float(gn)
-            opt.step()
+            try:
+                loss.backward()
+                grad_norm_total: float | None = None
+                if self.grad_clip and self.grad_clip > 0:
+                    gn = torch.nn.utils.clip_grad_norm_(
+                        [p for p in self.state.model.parameters() if p.requires_grad],
+                        self.grad_clip,
+                    )
+                    grad_norm_total = float(gn)
+                opt.step()
+            except Exception:
+                # OOM or other failure during backward/step. Clean up stale
+                # gradients and free CUDA cache to prevent cascading failures
+                # and VRAM fragmentation on subsequent steps. See C-8.
+                opt.zero_grad(set_to_none=True)
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                raise
 
             components["loss"] = float(loss.detach().cpu())
             if grad_norm_total is not None:
                 components["grad_norm_total"] = grad_norm_total
                 components["grad_clipped"] = bool(grad_norm_total > self.grad_clip)
 
-            # Post-step adapter + residual norm. Counterpart to grad_norm:
-            # grad_norm is the *impulse* this step applied; these are the
-            # *cumulative* size of the LoRA delta (live + merged residual).
-            # Complement each other on the dashboard.
-            adapter_sq = 0.0
-            for p in self.state.model.parameters():
-                if p.requires_grad:
-                    adapter_sq += float(p.detach().pow(2).sum())
-            components["adapter_norm_total"] = adapter_sq ** 0.5
-            residual_sq = 0.0
-            for d in self.state.merged_deltas.values():
-                residual_sq += float(d.detach().pow(2).sum())
-            components["residual_norm_total"] = residual_sq ** 0.5
+            # Post-step adapter + residual norm — single GPU kernel via cat.
+            # Counterpart to grad_norm: grad_norm is the *impulse* this step
+            # applied; these are the *cumulative* size of the LoRA delta
+            # (live + merged residual). Complement each other on the dashboard.
+            # C-4: Previous per-param loop caused 100+ kernel launches; now
+            # a single torch.cat + norm() call.
+            grad_params = [p.detach().flatten() for p in self.state.model.parameters() if p.requires_grad]
+            if grad_params:
+                components["adapter_norm_total"] = float(torch.cat(grad_params).norm())
+            else:
+                components["adapter_norm_total"] = 0.0
+            if self.state.merged_deltas:
+                residual_flat = torch.cat([d.detach().flatten() for d in self.state.merged_deltas.values()])
+                components["residual_norm_total"] = float(residual_flat.norm())
+            else:
+                components["residual_norm_total"] = 0.0
 
             return {"loss": components["loss"], "components": components, "skipped": False}
 
@@ -336,17 +353,27 @@ class TrainEngine:
         # Single optimizer step over the combined loss. Uses shared optimizer
         # slot; per-objective Adam moments don't make sense when the gradient
         # is a linear combination — m/v would be incoherent.
+        # M-12: Free first_result before backward to release GPU tensors
+        # (target_positions, input_ids, etc.) that are no longer needed.
+        del first_result
         opt = self._optimizer(_SHARED_KEY)
         opt.zero_grad()
-        total_loss.backward()
-        grad_norm_total: float | None = None
-        if self.grad_clip and self.grad_clip > 0:
-            gn = torch.nn.utils.clip_grad_norm_(
-                [p for p in self.state.model.parameters() if p.requires_grad],
-                self.grad_clip,
-            )
-            grad_norm_total = float(gn)
-        opt.step()
+        try:
+            total_loss.backward()
+            grad_norm_total: float | None = None
+            if self.grad_clip and self.grad_clip > 0:
+                gn = torch.nn.utils.clip_grad_norm_(
+                    [p for p in self.state.model.parameters() if p.requires_grad],
+                    self.grad_clip,
+                )
+                grad_norm_total = float(gn)
+            opt.step()
+        except Exception:
+            # OOM recovery — see C-8.
+            opt.zero_grad(set_to_none=True)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            raise
 
         components["loss"] = float(total_loss.detach().cpu())
         components["objectives_count"] = len(primaries)
@@ -357,14 +384,18 @@ class TrainEngine:
             components["grad_norm_total"] = grad_norm_total
             components["grad_clipped"] = bool(grad_norm_total > self.grad_clip)
 
-        adapter_sq = 0.0
-        for p in self.state.model.parameters():
-            if p.requires_grad:
-                adapter_sq += float(p.detach().pow(2).sum())
-        components["adapter_norm_total"] = adapter_sq ** 0.5
-        residual_sq = 0.0
-        for d in self.state.merged_deltas.values():
-            residual_sq += float(d.detach().pow(2).sum())
-        components["residual_norm_total"] = residual_sq ** 0.5
+        # Post-step adapter + residual norm — single GPU kernel via cat.
+        # C-4: Previous per-param loop caused 100+ kernel launches; now
+        # a single torch.cat + norm() call.
+        grad_params = [p.detach().flatten() for p in self.state.model.parameters() if p.requires_grad]
+        if grad_params:
+            components["adapter_norm_total"] = float(torch.cat(grad_params).norm())
+        else:
+            components["adapter_norm_total"] = 0.0
+        if self.state.merged_deltas:
+            residual_flat = torch.cat([d.detach().flatten() for d in self.state.merged_deltas.values()])
+            components["residual_norm_total"] = float(residual_flat.norm())
+        else:
+            components["residual_norm_total"] = 0.0
 
         return {"loss": components["loss"], "components": components, "skipped": False}

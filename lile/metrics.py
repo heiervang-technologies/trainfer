@@ -19,6 +19,8 @@ import os
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+import torch
+
 from prometheus_client import (
     CollectorRegistry,
     Counter,
@@ -188,19 +190,24 @@ class _ControllerGaugeCollector(Collector):
                 pass
             try:
                 if c.state is not None and c.state.model is not None:
-                    sq = 0.0
-                    for p in c.state.model.parameters():
-                        if p.requires_grad:
-                            sq += float(p.detach().pow(2).sum())
-                    adapter_norm = sq ** 0.5
+                    # C-4: fused cat().norm() — one kernel launch instead of
+                    # 100+ per-param .pow(2).sum() calls. Critical here because
+                    # the metrics scraper runs on Prometheus's HTTP thread
+                    # WITHOUT mode_lock, so minimizing GPU kernel launches
+                    # reduces the race window with backward()/generate().
+                    grad_params = [p.detach().flatten()
+                                   for p in c.state.model.parameters()
+                                   if p.requires_grad]
+                    if grad_params:
+                        adapter_norm = float(torch.cat(grad_params).norm())
             except Exception:  # pragma: no cover
                 pass
             try:
-                if c.state is not None:
-                    sq = 0.0
-                    for d in c.state.merged_deltas.values():
-                        sq += float(d.detach().pow(2).sum())
-                    residual_norm = sq ** 0.5
+                if c.state is not None and c.state.merged_deltas:
+                    residual_flat = torch.cat(
+                        [d.detach().flatten()
+                         for d in c.state.merged_deltas.values()])
+                    residual_norm = float(residual_flat.norm())
             except Exception:  # pragma: no cover
                 pass
 

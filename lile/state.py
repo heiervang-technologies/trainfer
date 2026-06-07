@@ -269,6 +269,32 @@ class ModelState:
         )
 
     # ------------------------------------------------------------------ residual → live
+    def _clear_residual_from_model(self) -> None:
+        """Remove all residual hooks and _residual_delta attrs from the live model.
+
+        Called when a snapshot with empty merged_deltas is loaded over a model
+        that previously had a non-empty residual. Without this, the old
+        forward hooks and _residual_delta bindings leak into the new state,
+        silently corrupting inference. See review finding C-6.
+        """
+        for name, handle in list(self._residual_hook_handles.items()):
+            try:
+                handle.remove()
+            except Exception:
+                pass
+        self._residual_hook_handles.clear()
+        for _name, module in self.model.named_modules():
+            if not hasattr(module, "lora_A") or not hasattr(module, "lora_B"):
+                continue
+            base_layer = getattr(module, "base_layer", None)
+            target_w = base_layer.weight if base_layer is not None else None
+            if target_w is not None and hasattr(target_w, "_residual_delta"):
+                try:
+                    del target_w._residual_delta
+                except AttributeError:
+                    pass
+        log.info("cleared residual from live model (hooks + _residual_delta)")
+
     def _apply_residual_to_model(self) -> None:
         """Bind the CPU bf16 residual onto each live LoRA site for forward-time use.
 

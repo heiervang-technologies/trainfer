@@ -173,12 +173,18 @@ def sequence_logprob(model: Any, input_ids: torch.Tensor, labels: torch.Tensor,
     # Shift for next-token prediction.
     shift_logits = logits[:, :-1, :].contiguous()
     shift_labels = labels[:, 1:].contiguous()
-    mask = (shift_labels != -100)
-    # Replace -100 with 0 for safe gather, then mask.
-    safe_labels = shift_labels.masked_fill(~mask, 0)
-    logprobs = F.log_softmax(shift_logits.float(), dim=-1)
-    token_logprobs = logprobs.gather(-1, safe_labels.unsqueeze(-1)).squeeze(-1)
-    token_logprobs = token_logprobs.masked_fill(~mask, 0.0)
+    # C-5: Use F.cross_entropy(reduction='none') instead of materializing
+    # the full (B, T, V) float32 log_softmax tensor. cross_entropy fuses
+    # softmax + gather internally — saves ~592 MB per call (B=2, T=512,
+    # V=152K). The result is -log_prob(target), so negate to get log_prob.
+    # cross_entropy expects (N, C) input → reshape to (B*T, V).
+    B, T, V = shift_logits.shape
+    flat_logits = shift_logits.reshape(B * T, V).float()
+    flat_labels = shift_labels.reshape(B * T)
+    # cross_entropy with ignore_index=-100 outputs 0 for masked positions.
+    neg_logprobs = F.cross_entropy(flat_logits, flat_labels, ignore_index=-100,
+                                   reduction='none')             # (B*T,)
+    token_logprobs = -neg_logprobs.reshape(B, T)                 # (B, T)
     summed = token_logprobs.sum(dim=-1)
     return summed
 

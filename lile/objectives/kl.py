@@ -160,10 +160,9 @@ def _target_position_kl(
     """Single-position KL at each sample's last real token, masking out
     caller-supplied exclude IDs before renormalizing.
 
-    KL( π_ref || π_θ ) is the direction the existing anchor uses (log_p =
-    log π_θ, log_q = log π_ref, compute ``p * (log_p - log_q)`` with
-    ``p = π_θ``). Keep the same direction here so ``scope="target_position"``
-    is a drop-in narrower scope, not a different loss.
+    KL( π_θ || π_ref ) — forward KL. ``log_p = log π_θ``, ``log_q = log π_ref``,
+    compute ``p * (log_p - log_q)`` with ``p = π_θ``. This is the standard
+    RLHF/DPO anchor direction (mode-covering, penalizes zero-mass in π_ref).
     """
     if not samples:
         raise ValueError("kl_anchor_loss requires at least one sample")

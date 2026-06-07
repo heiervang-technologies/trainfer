@@ -61,8 +61,15 @@ class SnapshotManager:
         residual_path = d / "merged_deltas.safetensors"
         if residual_path.exists():
             state.merged_deltas = load_file(str(residual_path))
+            # Bind the loaded residual onto the live model's forward path.
+            # Without this, the residual sits on CPU but inference uses
+            # stale/missing hooks — see review finding C-1.
+            state._apply_residual_to_model()
         else:
             state.merged_deltas = {}
+            # Clean up any hooks/attrs from a prior merge so the model
+            # runs clean — see review finding C-6.
+            state._clear_residual_from_model()
         adapter_path = d / "active_adapter.safetensors"
         if adapter_path.exists():
             state.load_active_adapter(load_file(str(adapter_path)))

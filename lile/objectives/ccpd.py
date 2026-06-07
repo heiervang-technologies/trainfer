@@ -100,6 +100,14 @@ def ccpd_v2_loss(
                 model, tokenizer, prompt, critique=critique,
                 n=need, max_new_tokens=max_new_tokens,
             ))
+        # C-2: _sample_candidates flips to for_inference() internally;
+        # restore training mode so the REINFORCE + distill forwards that
+        # follow compute gradients correctly.
+        try:
+            from unsloth import FastLanguageModel
+            FastLanguageModel.for_training(model)
+        except Exception:
+            pass
     if user_preferred:
         # Seed top of rank with the user-supplied rewrite (unique-ify).
         if user_preferred not in candidates:
