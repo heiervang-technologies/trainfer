@@ -9,7 +9,6 @@ Run: python -m lile.tests.test_unlike_loss  (or pytest)
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 

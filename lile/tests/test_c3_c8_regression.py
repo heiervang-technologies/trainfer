@@ -8,7 +8,6 @@ C-8: OOM (or any exception) during backward/step must clean up stale
 """
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest

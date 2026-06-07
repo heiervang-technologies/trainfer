@@ -8,7 +8,6 @@ Run with: python -m lile.tests.smoke_server
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import pathlib
 import socket

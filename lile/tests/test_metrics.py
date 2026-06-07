@@ -15,7 +15,6 @@ Run with: pytest lile/tests/test_metrics.py
 """
 from __future__ import annotations
 
-import pytest
 
 # NOTE: these tests lazy-import ``lile.metrics`` inside their bodies, which
 # pulls prometheus_client — not available in the torchless cpu_only CI
@@ -317,7 +316,6 @@ def _counter_value(rendered: bytes, name: str, labels: dict[str, str]) -> float:
 
 def _sample_value(text: str, name: str, labels: dict[str, str] | None = None) -> float:
     """Return the sample value for ``<name>{<labels>} <value>`` or 0.0 if absent."""
-    label_str = ""
     if labels:
         # prom text format labels are alphabetized; match permissively by
         # checking every `name{...}` line and parsing.

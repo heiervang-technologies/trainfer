@@ -25,6 +25,8 @@ ERROR_CODES: frozenset[str] = frozenset({
     "unknown_response_id",
     "not_found",
     "queue_full",
+    "rate_limited",
+    "batch_too_large",
     "shutting_down",
     "shutdown_dropped",
     "timeout",
@@ -42,6 +44,7 @@ class LileError(Exception):
     code: str = "internal"
     status_code: int = 500
     retryable: bool = False
+    retry_after_ms: int | None = None
 
 
 class InvalidInputError(LileError):
@@ -72,6 +75,19 @@ class QueueFullError(LileError):
     code = "queue_full"
     status_code = 503
     retryable = True
+    retry_after_ms = 500
+
+
+class BatchTooLargeError(LileError):
+    code = "batch_too_large"
+    status_code = 413
+    retryable = False
+
+
+class RateLimitedError(LileError):
+    code = "rate_limited"
+    status_code = 429
+    retryable = True
 
 
 class ShuttingDownError(LileError):
@@ -98,17 +114,20 @@ def envelope_payload(
     message: str,
     request_id: str,
     retryable: bool = False,
+    retry_after_ms: int | None = None,
 ) -> dict[str, Any]:
     """Return the JSON body that goes on the wire.
 
     The top-level key is always ``"error"`` so a valid 2xx response (without
     an "error" key) is unambiguous.
     """
-    return {
-        "error": {
-            "code": code,
-            "message": message,
-            "retryable": bool(retryable),
-            "request_id": request_id,
-        },
+    err = {
+        "code": code,
+        "message": message,
+        "retryable": bool(retryable),
+        "request_id": request_id,
     }
+    if retry_after_ms is not None:
+        err["retry_after_ms"] = retry_after_ms
+        
+    return {"error": err}

@@ -16,15 +16,14 @@ import asyncio
 import os
 import sys
 import time
+import pytest
 
 os.environ.setdefault("UNSLOTH_DISABLE_STATISTICS", "1")
 
-import torch
 import unsloth  # noqa: F401
 
 from lile.state import ModelState
 from lile.engine.train import TrainEngine
-from lile.engine.inference import generate_chat
 
 
 def test_merge_determinism():
@@ -100,6 +99,7 @@ def test_end_to_end_training_moves_logprob():
     print("[e2e] training visibly moved policy OK")
 
 
+@pytest.mark.anyio
 async def test_controller_commit_cursor_e2e():
     """Submit a train request, then a generate with after_commit_token, via
     the Controller. The generate must block until training commits, and the

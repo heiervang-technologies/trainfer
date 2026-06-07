@@ -48,15 +48,19 @@ def _respond(
     code: str,
     message: str,
     retryable: bool,
+    retry_after_ms: int | None = None,
 ) -> JSONResponse:
     rid = _resolve_request_id()
     body = envelope_payload(
-        code=code, message=message, retryable=retryable, request_id=rid,
+        code=code, message=message, retryable=retryable, request_id=rid, retry_after_ms=retry_after_ms
     )
+    headers = {REQUEST_ID_HEADER: rid}
+    if retry_after_ms is not None:
+        headers["Retry-After"] = str(max(1, retry_after_ms // 1000))
     return JSONResponse(
         status_code=status_code,
         content=body,
-        headers={REQUEST_ID_HEADER: rid},
+        headers=headers,
     )
 
 
@@ -81,6 +85,7 @@ def register_error_handlers(app: FastAPI) -> None:
             code=exc.code,
             message=str(exc) or exc.code,
             retryable=exc.retryable,
+            retry_after_ms=exc.retry_after_ms,
         )
 
     @app.exception_handler(RequestValidationError)

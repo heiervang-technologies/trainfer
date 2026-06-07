@@ -6,7 +6,6 @@ computes gradients, and correctly triggers generation during the forward pass.
 from __future__ import annotations
 
 import os
-import sys
 
 os.environ.setdefault("UNSLOTH_DISABLE_STATISTICS", "1")
 

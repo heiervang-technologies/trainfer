@@ -142,7 +142,7 @@ def safety_monitor_loss(
     device = next(model.parameters()).device
     zero_loss = torch.zeros((), device=device)
 
-    B = len(samples)
+    len(samples)
     watch_sets = _resolve_watchlist(samples, watchlist, default_watchlist)
 
     # No positions anywhere ⇒ nothing to score; still emit the component

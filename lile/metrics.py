@@ -94,6 +94,12 @@ _EVAL_GREEDY_RANK = Counter(
     registry=REGISTRY,
 )
 
+lile_queue_depth_high_total = Counter(
+    "lile_queue_depth_high_total",
+    "Number of times the queue depth exceeded 75% capacity.",
+    registry=REGISTRY,
+)
+
 
 # ---------------------------------------------------------------- histograms
 

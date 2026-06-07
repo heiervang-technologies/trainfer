@@ -41,7 +41,7 @@ def main() -> int:
     })
     print(f"       loss={r['loss']:.4f} components={r['components']}")
     assert r["loss"] is not None
-    sft_first = r["loss"]
+    r["loss"]
 
     print("[smoke] SFT step x3 for descent check…")
     for i in range(3):

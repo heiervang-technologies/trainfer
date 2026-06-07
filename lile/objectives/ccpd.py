@@ -23,7 +23,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from ._utils import build_chat_inputs, pad_and_stack, sequence_logprob, sequence_logprob_mean
+from ._utils import build_chat_inputs, pad_and_stack, sequence_logprob_mean
 
 log = logging.getLogger(__name__)
 

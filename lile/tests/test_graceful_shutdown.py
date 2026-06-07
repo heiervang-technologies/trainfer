@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 import pathlib
 import tempfile
-from typing import Any
 
 import pytest
 
@@ -63,7 +62,6 @@ def test_shutting_down_flag_starts_false(tmp_path):
 
 def test_graceful_shutdown_flips_flag_and_drains_queue(tmp_path):
     async def main():
-        from lile.queue import ComputeQueue
 
         with tempfile.TemporaryDirectory(dir=tmp_path) as d:
             cfg = _cfg(pathlib.Path(d))

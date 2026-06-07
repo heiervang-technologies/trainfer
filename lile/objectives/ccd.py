@@ -10,7 +10,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from ._utils import build_chat_inputs, pad_and_stack, sequence_logprob
+from ._utils import pad_and_stack
 
 
 def ccd_loss(
@@ -116,7 +116,6 @@ def ccd_loss(
     B = len(samples)
     kl_mean_sum = 0.0
     mse_mean_sum = 0.0
-    total_tokens = 0
 
     fact_retention_sum = 0.0
     valid_facts = 0

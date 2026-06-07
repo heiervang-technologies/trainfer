@@ -10,11 +10,9 @@ Run with: python -m lile.tests.test_trajectory_snapshot
 from __future__ import annotations
 
 import json
-import shutil
 import sys
 import tempfile
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest

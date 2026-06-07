@@ -12,19 +12,58 @@ import time
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import metrics as metrics_mod
 from .config import ServeConfig
 from .controller import Controller
-from .errors import NotFoundError
+from .errors import NotFoundError, RateLimitedError
 from .metrics import MetricsMiddleware
 from .middleware import RequestIDMiddleware, current_request_id
 from .server_errors import register_error_handlers
 
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------- token buckets
+class TokenBucket:
+    def __init__(self, rate: float, capacity: float):
+        self.rate = rate
+        self.capacity = capacity
+        self.tokens = capacity
+        self.last_update = time.monotonic()
+
+    def consume(self, tokens: float = 1.0) -> bool:
+        now = time.monotonic()
+        elapsed = now - self.last_update
+        self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+        self.last_update = now
+        if self.tokens >= tokens:
+            self.tokens -= tokens
+            return True
+        return False
+
+
+class RateLimiter:
+    def __init__(self, rps: float | None):
+        self.rps = rps
+        self.buckets: dict[str, TokenBucket] = {}
+
+    def check(self, req: Request) -> None:
+        if self.rps is None or self.rps <= 0:
+            return
+        client_id = req.headers.get("X-Client-Id")
+        if not client_id:
+            client_id = req.client.host if req.client else "unknown"
+        bucket = self.buckets.get(client_id)
+        if bucket is None:
+            # Capacity = rps so we allow bursts up to 1 second's worth
+            bucket = TokenBucket(rate=self.rps, capacity=max(1.0, self.rps))
+            self.buckets[client_id] = bucket
+        if not bucket.consume(1.0):
+            raise RateLimitedError("rate limit exceeded")
 
 
 # ---------------------------------------------------------------------- pydantic
@@ -211,6 +250,9 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
     app.add_middleware(RequestIDMiddleware)
     register_error_handlers(app)
 
+    train_limiter = RateLimiter(cfg.rate_limit_train_rps)
+    feedback_limiter = RateLimiter(cfg.rate_limit_feedback_rps)
+
     # --------------------------------------------------------------- metrics
     @app.get("/metrics")
     async def metrics_endpoint(request: Request) -> Response:
@@ -231,7 +273,7 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
         return {
             "ok": True,
             "model": cfg.model,
-            "queue_depth": c.queue._q.qsize(),
+            "queue_depth": c.queue.qsize(),
             "commit_cursor": c.queue.committed,
             "merges": c.state.merges_applied if c.state else 0,
             "commit_sse_subscribers": c.commits.subscriber_count,
@@ -399,7 +441,8 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
 
     # --------------------------------------------------------------- train
     @app.post("/v1/train")
-    async def train(req: TrainRequest) -> dict[str, Any]:
+    async def train(request: Request, req: TrainRequest) -> dict[str, Any]:
+        train_limiter.check(request)
         c: Controller = app.state.controller
         spec = req.model_dump()
         return await c.submit_train(spec)
@@ -427,7 +470,8 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
 
     # --------------------------------------------------------------- feedback
     @app.post("/v1/feedback")
-    async def feedback(req: FeedbackRequest) -> dict[str, Any]:
+    async def feedback(request: Request, req: FeedbackRequest) -> dict[str, Any]:
+        feedback_limiter.check(request)
         c: Controller = app.state.controller
         payload = req.model_dump()
         return await c.submit_feedback(payload)

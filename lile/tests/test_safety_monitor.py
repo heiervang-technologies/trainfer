@@ -138,7 +138,7 @@ def _seed_run(
 
 def _pick_grower(model: _StubModel) -> tuple[int, int]:
     """Run a one-shot forward and return (a_grower_id, a_non_grower_id)."""
-    tok = _StubTok()
+    _StubTok()
     ids = torch.tensor([[1, 2, 3, 4, 5]], dtype=torch.long)
     with torch.no_grad():
         pi = F.softmax(model(ids).logits[0, 3].float(), dim=-1)

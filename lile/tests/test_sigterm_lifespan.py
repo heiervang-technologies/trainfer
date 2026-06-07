@@ -17,10 +17,8 @@ import socket
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 import httpx
-import pytest
 
 # NOTE: spawns a subprocess that runs a real uvicorn server; uvicorn is
 # not installed in the torchless cpu_only CI bucket. Leave unmarked so

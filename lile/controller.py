@@ -13,7 +13,6 @@ import collections
 import logging
 import threading
 import time
-from pathlib import Path
 from typing import Any
 
 # Response index cap: after this many live responses we start evicting the
@@ -494,16 +493,43 @@ class Controller:
             raise ValueError("submit_train: set exactly one of 'objective' or 'objectives'")
         if not has_obj and not has_objs:
             raise ValueError("submit_train: must set 'objective' or 'objectives'")
+            
+        total_samples = 0
+        if has_objs:
+            for obj in spec["objectives"]:
+                total_samples += len(obj.get("samples", []))
+        else:
+            total_samples = len(spec.get("samples", []))
+            
+        max_samples = self.cfg.max_samples_per_train_call
+        if total_samples > max_samples:
+            from .errors import BatchTooLargeError
+            raise BatchTooLargeError(f"batch_too_large: request has {total_samples} samples, cap is {max_samples}")
+            
         batch_id = new_batch_id()
+
+        qsize = self.queue.qsize()
+        qmax = self.queue.maxsize
+        q_ratio = qsize / max(1, qmax)
+        if q_ratio > 0.75:
+            log.warning(f"queue depth high: {qsize}/{qmax}")
+            from . import metrics
+            metrics.lile_queue_depth_high_total.inc()
+            
+        def _pressure_dict():
+            if q_ratio > 0.9:
+                return {"queue_pressure": "high"}
+            return {}
 
         if has_objs:
             # Multi-objective: don't chunk — one combined-loss step.
-            t = await self.queue.submit("train", dict(spec), batch_id=batch_id)
+            t = await self.queue.try_submit("train", dict(spec), batch_id=batch_id)
             return {
                 "batch_id": batch_id,
                 "commit_token": t.token,
                 "n_chunks": 1,
-                "queue_depth": self.queue._q.qsize(),
+                "queue_depth": self.queue.qsize(),
+                **_pressure_dict(),
             }
 
         samples = spec.get("samples", [])
@@ -514,7 +540,7 @@ class Controller:
                 **spec,
                 "samples": samples[i:i + chunk_size] if samples else samples,
             }
-            t = await self.queue.submit("train", sub, batch_id=batch_id)
+            t = await self.queue.try_submit("train", sub, batch_id=batch_id)
             tasks.append(t)
             if not samples:
                 break
@@ -524,7 +550,8 @@ class Controller:
             "batch_id": batch_id,
             "commit_token": commit_token,
             "n_chunks": len(tasks),
-            "queue_depth": self.queue._q.qsize(),
+            "queue_depth": self.queue.qsize(),
+            **_pressure_dict(),
         }
 
     @staticmethod
