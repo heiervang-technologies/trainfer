@@ -34,6 +34,7 @@ class TrainEngine:
         per_objective: bool = False,
         per_objective_lr: dict[str, float] | None = None,
         default_watchlist: list[int] | None = None,
+        optimizer_class: str = "adamw8bit",
     ) -> None:
         self.state = state
         self.lr = lr
@@ -45,9 +46,10 @@ class TrainEngine:
         # here we just forward the daemon-global slice. See
         # safety-monitor-primitive.md.
         self.default_watchlist: list[int] = list(default_watchlist or [])
+        self.optimizer_class = optimizer_class
         # Map objective_name -> optimizer. When per_objective=False, the only
         # key is _SHARED_KEY and every step reuses it. When True, each
-        # objective gets its own torch.optim.AdamW so Adam m/v stay isolated
+        # objective gets its own torch.optim.Optimizer so Adam m/v stay isolated
         # per family — PyTorch keys optimizer.state by tensor id, so
         # param_groups alone won't isolate moments.
         self._opts: dict[str, torch.optim.Optimizer] = {}
@@ -58,8 +60,8 @@ class TrainEngine:
         if opt is None:
             params = [p for p in self.state.model.parameters() if p.requires_grad]
             if self.per_objective:
-                # Plain 32-bit AdamW per objective. bitsandbytes AdamW8bit is
-                # deliberately avoided here: its GlobalOptimManager is a
+                # Plain 32-bit AdamW per objective. bitsandbytes optimizers are
+                # deliberately avoided here: their GlobalOptimManager is a
                 # process-wide singleton that does not cleanly support
                 # multiple instances over the same params. See
                 # optimizer-sample-efficiency.md §3 + anti-patterns.
@@ -67,15 +69,27 @@ class TrainEngine:
                 opt = torch.optim.AdamW(params, lr=lr)
                 log.info("per-objective AdamW for %r (lr=%g)", objective, lr)
             else:
-                # 8-bit Adam if bitsandbytes is present, else plain AdamW.
-                try:
-                    import bitsandbytes as bnb
+                if self.optimizer_class == "lion8bit":
+                    try:
+                        import bitsandbytes as bnb
 
-                    opt = bnb.optim.AdamW8bit(params, lr=self.lr)
-                    log.info("using bitsandbytes AdamW8bit (lr=%g)", self.lr)
-                except Exception:
-                    opt = torch.optim.AdamW(params, lr=self.lr)
-                    log.info("using torch AdamW (lr=%g)", self.lr)
+                        opt = bnb.optim.Lion8bit(params, lr=self.lr)
+                        log.info("using bitsandbytes Lion8bit (lr=%g)", self.lr)
+                    except Exception:
+                        log.warning(
+                            "failed to import bitsandbytes Lion8bit; falling back to AdamW"
+                        )
+                        opt = torch.optim.AdamW(params, lr=self.lr)
+                else:
+                    # 8-bit Adam if bitsandbytes is present, else plain AdamW.
+                    try:
+                        import bitsandbytes as bnb
+
+                        opt = bnb.optim.AdamW8bit(params, lr=self.lr)
+                        log.info("using bitsandbytes AdamW8bit (lr=%g)", self.lr)
+                    except Exception:
+                        opt = torch.optim.AdamW(params, lr=self.lr)
+                        log.info("using torch AdamW (lr=%g)", self.lr)
             self._opts[key] = opt
         return opt
 

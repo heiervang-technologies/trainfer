@@ -115,6 +115,9 @@ class ServeConfig:
     per_objective_optim: bool = False
     per_objective_lr: dict[str, float] = field(default_factory=dict)
 
+    # Optimizer class: "adamw8bit" (default) or "lion8bit".
+    optimizer: str = "adamw8bit"
+
     # --- /v1/commits/stream SSE -------------------------------------------
     # Per-commit event stream, one event per successful train-task cursor
     # advance. See ``lile/docs/research/pr-specs/commits-sse-stream.md``.

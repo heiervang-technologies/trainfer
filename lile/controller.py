@@ -103,6 +103,7 @@ class Controller:
             per_objective=self.cfg.per_objective_optim,
             per_objective_lr=self.cfg.per_objective_lr,
             default_watchlist=self.cfg.default_watchlist,
+            optimizer_class=self.cfg.optimizer,
         )
         # Stamp run-level params into the external logger once the state is
         # loaded; NullLogger swallows this, real backends record it as
