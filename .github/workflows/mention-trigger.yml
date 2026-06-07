@@ -29,5 +29,4 @@ jobs:
       agent_name: 'marksverdhai'
       agent_type: 'single-task'
       snail_image_default: '192.168.8.170:30501/snail:dev-gpu'
-      postgrest_url: ${{ secrets.POSTGREST_URL }}
     secrets: inherit
