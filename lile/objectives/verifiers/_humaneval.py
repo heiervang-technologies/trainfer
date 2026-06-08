@@ -22,6 +22,7 @@ import hashlib
 import multiprocessing as _mp
 import re
 
+from . import register
 # evalplus's untrusted_check uses multiprocessing.Process() without specifying
 # a start method. Python 3.14 defaults to "spawn" on Linux, but evalplus's
 # sandbox relies on fork semantics so the test runner inherits imported
@@ -30,7 +31,6 @@ import re
 # doesn't propagate to the daemon's process-wide state.
 _MP_CTX = _mp.get_context("fork")
 
-from . import register
 
 _HUMANEVAL_DATA: dict | None = None
 _HUMANEVAL_EXPECTED: dict | None = None

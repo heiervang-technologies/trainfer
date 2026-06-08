@@ -19,8 +19,8 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from lile.engine.train import TrainEngine
-from lile.objectives import OBJECTIVES
+from lile.engine.train import TrainEngine  # noqa: E402
+from lile.objectives import OBJECTIVES  # noqa: E402
 
 
 # ---------------------------------------------------------------- fakes

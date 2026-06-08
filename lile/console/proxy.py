@@ -2,6 +2,7 @@
 
 Run with system Python — no venv, no deps.
 """
+
 from __future__ import annotations
 
 import json
@@ -34,13 +35,17 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _proxy(self, method: str):
-        upstream_path = self.path[len("/api"):] or "/"
+        upstream_path = self.path[len("/api") :] or "/"
         url = UPSTREAM + upstream_path
         length = int(self.headers.get("content-length", "0") or "0")
         body = self.rfile.read(length) if length else None
         req = urllib.request.Request(
-            url, data=body, method=method,
-            headers={"content-type": self.headers.get("content-type", "application/json")},
+            url,
+            data=body,
+            method=method,
+            headers={
+                "content-type": self.headers.get("content-type", "application/json")
+            },
         )
         try:
             r = urllib.request.urlopen(req, timeout=600)
@@ -51,14 +56,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("content-type", ctype)
             self.send_header("content-length", str(len(data)))
             self.end_headers()
-            self.wfile.write(data); return
+            self.wfile.write(data)
+            return
         except Exception as e:
             data = json.dumps({"error": f"proxy upstream failure: {e}"}).encode()
             self.send_response(502)
             self.send_header("content-type", "application/json")
             self.send_header("content-length", str(len(data)))
             self.end_headers()
-            self.wfile.write(data); return
+            self.wfile.write(data)
+            return
 
         ctype = r.headers.get("content-type", "application/json")
         if ctype.startswith("text/event-stream"):
@@ -73,7 +80,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 while True:
                     chunk = r.read1(4096) if hasattr(r, "read1") else r.read(256)
-                    if not chunk: break
+                    if not chunk:
+                        break
                     self.wfile.write(chunk)
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
@@ -93,17 +101,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/" or self.path == "/index.html":
-            self._serve_file(HTML); return
+            self._serve_file(HTML)
+            return
         if self.path == "/dashboard" or self.path == "/dashboard.html":
-            self._serve_file(DASHBOARD); return
+            self._serve_file(DASHBOARD)
+            return
         if self.path == "/metrics" or self.path == "/metrics.html":
-            self._serve_file(METRICS); return
+            self._serve_file(METRICS)
+            return
         if self.path.startswith("/api/") or self.path == "/api":
-            self._proxy("GET"); return
+            self._proxy("GET")
+            return
         self.send_error(404)
 
     def do_POST(self):
-        if self.path.startswith("/api/"): self._proxy("POST"); return
+        if self.path.startswith("/api/"):
+            self._proxy("POST")
+            return
         self.send_error(404)
 
 

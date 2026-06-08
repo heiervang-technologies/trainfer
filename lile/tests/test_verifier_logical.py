@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = pytest.mark.cpu_only
-
 from lile.objectives.verifiers import VERIFIERS, verify
 from lile.teach.logical import get_split, load_tasks
+
+pytestmark = pytest.mark.cpu_only
 
 
 def _task_by_id(tid: str) -> dict:

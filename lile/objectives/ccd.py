@@ -10,7 +10,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from ._utils import pad_and_stack
+from ._utils import _to_int_list, pad_and_stack
 
 
 def ccd_loss(

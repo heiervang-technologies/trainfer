@@ -15,11 +15,11 @@ import threading
 
 import pytest
 
-pytestmark = pytest.mark.cpu_only
-
 from lile.objectives.verifiers import VERIFIERS, register, select, verify
 from lile.objectives.verifiers._math import answers_match, extract_answer
 from lile.objectives.verifiers._code import extract_code, extract_expected
+
+pytestmark = pytest.mark.cpu_only
 
 
 # ---------------------------------------------------------------- registry

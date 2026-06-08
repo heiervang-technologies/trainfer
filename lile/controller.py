@@ -15,9 +15,6 @@ import threading
 import time
 from typing import Any
 
-# Response index cap: after this many live responses we start evicting the
-# oldest entries. OrderedDict gives O(1) insertion, lookup, and eviction.
-_RESPONSE_INDEX_CAP = 4096
 
 from .commit_stream import CommitBroadcaster
 from .config import ServeConfig
@@ -31,6 +28,10 @@ from .teach.ttrl_mv import TTRLPolicy, TTRLScheduler
 from .trajectory import TrajectoryLog, new_response_id
 
 log = logging.getLogger(__name__)
+
+# Response index cap: after this many live responses we start evicting the
+# oldest entries. OrderedDict gives O(1) insertion, lookup, and eviction.
+_RESPONSE_INDEX_CAP = 4096
 
 
 class Controller:
