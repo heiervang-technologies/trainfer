@@ -2,6 +2,10 @@
 
 __version__ = "0.1.0-dev"
 
+try:
+    import unsloth  # noqa: F401
+except ImportError:
+    pass
 
 def install() -> None:
     """Install the matmul_lora residual patch. Idempotent. Called automatically
