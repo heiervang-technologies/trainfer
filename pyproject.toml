@@ -56,3 +56,10 @@ markers = [
     "gpu: test requires CUDA (loads a real model, exercises Unsloth kernels)",
     "eval: test exercises lile.teach.eval harness (stub path without --extra eval)",
 ]
+
+[tool.pyright]
+reportMissingImports = false
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportUnknownVariableType = false
