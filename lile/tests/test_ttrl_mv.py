@@ -23,6 +23,7 @@ import asyncio
 import tempfile
 import time
 from pathlib import Path
+from lile.controller import Controller
 
 import pytest
 
@@ -46,7 +47,6 @@ class _FakeQueue:
         return self.idle
 
 
-from lile.controller import Controller
 
 class _FakeController(Controller):
     """Minimal Controller stand-in for the TTRL scheduler."""

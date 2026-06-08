@@ -113,7 +113,7 @@ def test_ccd_loss_forward_and_backward():
         out["loss"].backward()
         opt.step()
         print(
-            f"  step {step} loss={float(out['loss']):.4f} fact_retention={out['components'].get('fact_retention_mean', 0.0):.2f}"
+            f"  step {step} loss={float(out['loss'].detach()):.4f} fact_retention={out['components'].get('fact_retention_mean', 0.0):.2f}"
         )
 
     # Evaluate post-train on the probes without the document

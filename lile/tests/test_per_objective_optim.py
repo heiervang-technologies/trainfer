@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import pytest
 import torch
+from typing import cast
+from lile.state import ModelState
 
 from lile.config import ServeConfig
 from lile.engine.train import TrainEngine
@@ -54,8 +56,6 @@ class _ToyState:
             p.requires_grad_(True)
 
 
-from typing import cast
-from lile.state import ModelState
 
 def _fresh_engine(per_objective: bool, **kwargs) -> TrainEngine:
     return TrainEngine(cast(ModelState, _ToyState()), lr=1e-3, per_objective=per_objective, **kwargs)
