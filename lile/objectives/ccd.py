@@ -210,8 +210,8 @@ def ccd_loss(
 
         # KL on logits
         # We predict the NEXT token, so we compare logits at [:-1]
-        t_log_p = F.log_softmax(t_logits[i, start_t : L_t - 1], dim=-1)  # teacher log_p
-        s_log_p = F.log_softmax(s_logits[i, 0 : L_s - 1], dim=-1)  # student log_q
+        t_log_p = F.log_softmax(t_logits[i, start_t : L_t - 1].float(), dim=-1)  # teacher log_p
+        s_log_p = F.log_softmax(s_logits[i, 0 : L_s - 1].float(), dim=-1)  # student log_q
 
         # p * (log_p - log_q)
         p = torch.exp(t_log_p)
