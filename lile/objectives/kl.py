@@ -217,11 +217,7 @@ def _target_position_kl(
 
     log_p = F.log_softmax(masked_logits, dim=-1)  # π_θ
     log_q = F.log_softmax(masked_ref, dim=-1)  # π_ref
-    p = log_p.exp()
-    # Multiply by ``~exclude_mask`` before the sum so any residual mass that
-    # the finite-precision softmax assigned to -inf rows is zeroed — not
-    # strictly necessary (softmax(-inf)=0) but cheap belt-and-suspenders.
-    kl_per_token = p * (log_p - log_q)
+    kl_per_token = F.kl_div(log_q, log_p, reduction="none", log_target=True)
     kl_per_token = kl_per_token.masked_fill(exclude_mask, 0.0)
     kl_per_row = kl_per_token.sum(dim=-1)  # (B,)
     kl_mean = kl_per_row.mean()
@@ -301,8 +297,7 @@ def kl_anchor_loss(
     # Mean token KL over the prompt positions.
     log_p = F.log_softmax(logits.float(), dim=-1)
     log_q = F.log_softmax(ref_logits.float(), dim=-1)
-    p = log_p.exp()
-    kl = (p * (log_p - log_q)).sum(dim=-1)  # (B, T)
+    kl = F.kl_div(log_q, log_p, reduction="none", log_target=True).sum(dim=-1)  # (B, T)
     attn = tok.get("attention_mask")
     if attn is not None:
         kl = kl * attn.float()

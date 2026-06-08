@@ -85,7 +85,7 @@ def test_ccpd_forward_and_backward_real_model():
     assert torch.is_tensor(loss), loss
     assert loss.requires_grad, "CCPD v2 loss must carry gradients"
     assert torch.isfinite(loss).item(), f"loss is non-finite: {loss}"
-    print(f"[ccpd] initial loss={float(loss):.4f}, components={out['components']}")
+    print(f"[ccpd] initial loss={loss.detach().item():.4f}, components={out['components']}")
     assert out["components"]["ccpd_k_candidates"] >= 2, out["components"]
 
     # Backward pass must populate at least one LoRA gradient.
@@ -193,7 +193,7 @@ def test_ccpd_actually_improves_rc():
         )
         opt.step()
         print(
-            f"[ccpd] step {step}: loss={float(out['loss']):+.4f} "
+            f"[ccpd] step {step}: loss={out['loss'].detach().item():+.4f} "
             f"components={ {k: round(v, 3) for k, v in out['components'].items()} }"
         )
 

@@ -247,8 +247,7 @@ def ccpd_v2_loss(
                 ref_logits = pi_ref(**tok).logits.float()  # type: ignore
         log_p = F.log_softmax(logits, dim=-1)
         log_q = F.log_softmax(ref_logits, dim=-1)
-        p = log_p.exp()
-        kl = (p * (log_p - log_q)).sum(dim=-1).mean()
+        kl = F.kl_div(log_q, log_p, reduction="batchmean", log_target=True)
         L_kl = kl
     else:
         L_kl = torch.zeros((), device=lp_stack.device)
