@@ -21,6 +21,7 @@ Covers the 9 test obligations from
 cpu_only; stub model shape matches the pattern established in
 ``test_kl_target_position.py`` / ``test_unlike_tiered_preconditions.py``.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -82,6 +83,7 @@ class _StubTok:
 
 # --- obligation 1: Cleo's numeric witness ----------------------------------
 
+
 def test_m_p_matches_cleo_witness() -> None:
     pi = torch.tensor([0.10, 0.89, 0.01], dtype=torch.float64)
     mp = _m_p_value(pi, t=0, eta=1.0)
@@ -97,6 +99,7 @@ def test_m_p_matches_cleo_witness() -> None:
 
 
 # --- obligation 2: grower-set matches predicate on random simplex points ---
+
 
 def test_grower_set_matches_predicate_over_random_simplex() -> None:
     torch.manual_seed(0)
@@ -116,8 +119,10 @@ def test_grower_set_matches_predicate_over_random_simplex() -> None:
 
 # --- obligations 3 & 4: watchlist hit / miss ------------------------------
 
+
 def _seed_run(
-    model: _StubModel, watchlist: list[int] | None = None,
+    model: _StubModel,
+    watchlist: list[int] | None = None,
     default_watchlist: list[int] | None = None,
     sample_watchlist: list[int] | None = None,
 ) -> dict[str, Any]:
@@ -128,10 +133,15 @@ def _seed_run(
     if sample_watchlist is not None:
         sample["watchlist"] = sample_watchlist
     return safety_monitor_loss(
-        model=model, tokenizer=tok, samples=[sample],
-        target_positions=[[3]], target_token_ids=[[7]],
-        input_ids=ids, attention_mask=attn,
-        watchlist=watchlist, default_watchlist=default_watchlist,
+        model=model,
+        tokenizer=tok,
+        samples=[sample],
+        target_positions=[[3]],
+        target_token_ids=[[7]],
+        input_ids=ids,
+        attention_mask=attn,
+        watchlist=watchlist,
+        default_watchlist=default_watchlist,
         effective_lr=1.0,
     )
 
@@ -169,6 +179,7 @@ def test_watchlist_miss_fires_no_alarm() -> None:
 
 # --- obligation 5: three-tier watchlist union -----------------------------
 
+
 def test_three_tier_watchlist_union_all_contribute() -> None:
     m = _StubModel(seed=2)
     tok = _StubTok()
@@ -182,15 +193,20 @@ def test_three_tier_watchlist_union_all_contribute() -> None:
     # would hit, union must show all three.
     a, b, c = growers[0], growers[1], growers[2]
     out = safety_monitor_loss(
-        model=m, tokenizer=tok,
+        model=m,
+        tokenizer=tok,
         samples=[{"prompt": "x", "response": "y", "watchlist": [c]}],
-        target_positions=[[3]], target_token_ids=[[7]],
-        input_ids=ids, attention_mask=torch.ones_like(ids),
-        default_watchlist=[a], watchlist=[b],
+        target_positions=[[3]],
+        target_token_ids=[[7]],
+        input_ids=ids,
+        attention_mask=torch.ones_like(ids),
+        default_watchlist=[a],
+        watchlist=[b],
         effective_lr=1.0,
     )
-    hit_tokens = {tok_id for _, _, tok_id in
-                  out["components"]["safety_monitor_watchlist_hits"]}
+    hit_tokens = {
+        tok_id for _, _, tok_id in out["components"]["safety_monitor_watchlist_hits"]
+    }
     assert {a, b, c}.issubset(hit_tokens)
 
 
@@ -208,6 +224,7 @@ def test_resolve_watchlist_per_sample_isolation() -> None:
 
 # --- obligation 6: zero loss survives backward ----------------------------
 
+
 def test_zero_loss_survives_backward() -> None:
     m = _StubModel(seed=3)
     tok = _StubTok()
@@ -217,10 +234,13 @@ def test_zero_loss_survives_backward() -> None:
     with torch.enable_grad():
         anchor = m(ids).logits.float().sum() * 1e-6
         out = safety_monitor_loss(
-            model=m, tokenizer=tok,
+            model=m,
+            tokenizer=tok,
             samples=[{"prompt": "x", "response": "y"}],
-            target_positions=[[1]], target_token_ids=[[5]],
-            input_ids=ids, attention_mask=torch.ones_like(ids),
+            target_positions=[[1]],
+            target_token_ids=[[5]],
+            input_ids=ids,
+            attention_mask=torch.ones_like(ids),
             effective_lr=1.0,
         )
         total = anchor + out["loss"]
@@ -231,6 +251,7 @@ def test_zero_loss_survives_backward() -> None:
 
 # --- obligation 7: composition with SFT + kl_anchor ----------------------
 
+
 def test_composition_with_sft_and_kl_does_not_contribute_to_loss() -> None:
     """Pure unit: safety returns 0; verify summation with a graph-attached
     main loss is unchanged. We don't exercise the full TrainEngine path
@@ -239,27 +260,34 @@ def test_composition_with_sft_and_kl_does_not_contribute_to_loss() -> None:
     m = _StubModel(seed=4)
     tok = _StubTok()
     ids = torch.tensor([[1, 2, 3, 4]], dtype=torch.long)
-    sft_like = m(ids).logits.float().mean()                # stand-in
+    sft_like = m(ids).logits.float().mean()  # stand-in
     mon = safety_monitor_loss(
-        model=m, tokenizer=tok,
+        model=m,
+        tokenizer=tok,
         samples=[{"prompt": "x", "response": "y"}],
-        target_positions=[[2]], target_token_ids=[[6]],
-        input_ids=ids, attention_mask=torch.ones_like(ids),
+        target_positions=[[2]],
+        target_token_ids=[[6]],
+        input_ids=ids,
+        attention_mask=torch.ones_like(ids),
         effective_lr=5e-4,
     )
     combined = sft_like + mon["loss"]
     assert torch.allclose(combined, sft_like)
     # Component keys pinned by the spec.
     expected_keys = {
-        "safety_monitor_eta", "safety_monitor_alarm_count",
-        "safety_monitor_grower_size_mean", "safety_monitor_grower_size_max",
-        "safety_monitor_M_p_mean", "safety_monitor_M_p_min",
+        "safety_monitor_eta",
+        "safety_monitor_alarm_count",
+        "safety_monitor_grower_size_mean",
+        "safety_monitor_grower_size_max",
+        "safety_monitor_M_p_mean",
+        "safety_monitor_M_p_min",
         "safety_monitor_watchlist_hits",
     }
     assert expected_keys.issubset(mon["components"].keys())
 
 
 # --- obligation 8: multi-position determinism -----------------------------
+
 
 def test_multi_position_sft_determinism() -> None:
     m = _StubModel(seed=5)
@@ -274,19 +302,25 @@ def test_multi_position_sft_determinism() -> None:
     for _ in range(2):
         torch.manual_seed(0)
         out = safety_monitor_loss(
-            model=m, tokenizer=tok,
+            model=m,
+            tokenizer=tok,
             samples=[{"prompt": "x", "response": "abcde"}],
-            target_positions=positions, target_token_ids=targets,
-            input_ids=ids, attention_mask=torch.ones_like(ids),
+            target_positions=positions,
+            target_token_ids=targets,
+            input_ids=ids,
+            attention_mask=torch.ones_like(ids),
             effective_lr=1.0,
         )
         runs.append(out["components"])
 
     a, b = runs
     for key in (
-        "safety_monitor_eta", "safety_monitor_alarm_count",
-        "safety_monitor_grower_size_mean", "safety_monitor_grower_size_max",
-        "safety_monitor_M_p_mean", "safety_monitor_M_p_min",
+        "safety_monitor_eta",
+        "safety_monitor_alarm_count",
+        "safety_monitor_grower_size_mean",
+        "safety_monitor_grower_size_max",
+        "safety_monitor_M_p_mean",
+        "safety_monitor_M_p_min",
     ):
         assert a[key] == b[key], (key, a[key], b[key])
     assert a["safety_monitor_watchlist_hits"] == b["safety_monitor_watchlist_hits"]
@@ -294,12 +328,14 @@ def test_multi_position_sft_determinism() -> None:
 
 # --- obligation 9: missing target_positions ⇒ RuntimeError ---------------
 
+
 def test_missing_target_positions_raises() -> None:
     m = _StubModel(seed=6)
     tok = _StubTok()
     with pytest.raises(RuntimeError, match="target_positions"):
         safety_monitor_loss(
-            model=m, tokenizer=tok,
+            model=m,
+            tokenizer=tok,
             samples=[{"prompt": "x", "response": "y"}],
             # target_positions deliberately omitted — the main objective
             # did not opt in. Pin the error message shape so the contract
@@ -315,7 +351,8 @@ def test_missing_target_positions_raises_pinned_message() -> None:
     tok = _StubTok()
     with pytest.raises(RuntimeError) as excinfo:
         safety_monitor_loss(
-            model=m, tokenizer=tok,
+            model=m,
+            tokenizer=tok,
             samples=[{"prompt": "x", "response": "y"}],
         )
     assert str(excinfo.value) == _MISSING_TARGETS_MSG
@@ -323,19 +360,25 @@ def test_missing_target_positions_raises_pinned_message() -> None:
 
 # --- non-obligation coverage: non-zero weight is coerced, warns ----------
 
+
 def test_nonzero_weight_is_coerced_with_warning() -> None:
     import warnings as w
+
     m = _StubModel(seed=7)
     tok = _StubTok()
     ids = torch.tensor([[1, 2, 3]], dtype=torch.long)
     with w.catch_warnings(record=True) as rec:
         w.simplefilter("always")
         out = safety_monitor_loss(
-            model=m, tokenizer=tok,
+            model=m,
+            tokenizer=tok,
             samples=[{"prompt": "x", "response": "y"}],
-            target_positions=[[1]], target_token_ids=[[5]],
-            input_ids=ids, attention_mask=torch.ones_like(ids),
-            effective_lr=1.0, weight=0.5,
+            target_positions=[[1]],
+            target_token_ids=[[5]],
+            input_ids=ids,
+            attention_mask=torch.ones_like(ids),
+            effective_lr=1.0,
+            weight=0.5,
         )
     msgs = [str(x.message) for x in rec if issubclass(x.category, RuntimeWarning)]
     assert any("observational" in m for m in msgs)
@@ -344,6 +387,7 @@ def test_nonzero_weight_is_coerced_with_warning() -> None:
 
 # --- main-objective target-position extraction end-to-end -----------------
 
+
 def test_sft_emits_target_positions() -> None:
     """Smoke: _utils.extract_target_positions on a synthetic label tensor
     produces the (positions, token_ids) pair the sidecar expects. Keeps
@@ -351,10 +395,13 @@ def test_sft_emits_target_positions() -> None:
     tokenizer.
     """
     from lile.objectives._utils import extract_target_positions
-    labels = torch.tensor([
-        [-100, -100, 3, 4, 5, -100],
-        [-100, 7, -100, 8, -100, -100],
-    ])
+
+    labels = torch.tensor(
+        [
+            [-100, -100, 3, 4, 5, -100],
+            [-100, 7, -100, 8, -100, -100],
+        ]
+    )
     positions, tokens = extract_target_positions(labels)
     # Indices are in logits-coord (labels shifted by one):
     assert positions == [[1, 2, 3], [0, 2]]

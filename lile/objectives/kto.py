@@ -26,6 +26,7 @@ the batch-mean (which is a constant at batch=1, per above).
 
 Defaults favor the community-validated λ_D=1.0, λ_U=1.5 imbalance from §5b.1.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -39,12 +40,18 @@ from ._utils import build_chat_inputs, pad_and_stack, sequence_logprob
 _Z0_EMA: dict[tuple[int, float], float] = {}
 
 
-def kto_loss(model: Any, tokenizer: Any, samples: list[dict[str, Any]],
-             pi_ref: Any | None = None, beta: float = 0.1,
-             lambda_desirable: float = 1.0, lambda_undesirable: float = 1.5,
-             pi_ref_mode: str | None = "adapter_disabled",
-             z0_ema_alpha: float | None = 0.9,
-             **_: Any) -> dict[str, Any]:
+def kto_loss(
+    model: Any,
+    tokenizer: Any,
+    samples: list[dict[str, Any]],
+    pi_ref: Any | None = None,
+    beta: float = 0.1,
+    lambda_desirable: float = 1.0,
+    lambda_undesirable: float = 1.5,
+    pi_ref_mode: str | None = "adapter_disabled",
+    z0_ema_alpha: float | None = 0.9,
+    **_: Any,
+) -> dict[str, Any]:
     """
     `samples` items: {"prompt": str, "response": str, "label": "desirable"|"undesirable"}
 
@@ -68,17 +75,25 @@ def kto_loss(model: Any, tokenizer: Any, samples: list[dict[str, Any]],
     if not samples:
         raise ValueError("kto_loss requires at least one sample")
 
-    tokenized = [build_chat_inputs(tokenizer, s["prompt"], s["response"]) for s in samples]
+    tokenized = [
+        build_chat_inputs(tokenizer, s["prompt"], s["response"]) for s in samples
+    ]
     pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id or 0
     batch = pad_and_stack(tokenized, pad_id=pad_id)
-    summed = sequence_logprob(model, batch["input_ids"], batch["labels"],
-                              batch["attention_mask"])
+    summed = sequence_logprob(
+        model, batch["input_ids"], batch["labels"], batch["attention_mask"]
+    )
     shifted_labels = batch["labels"][:, 1:]
-    n_tokens = (shifted_labels != -100).sum(dim=-1).clamp_min(1).float().to(summed.device)
-    policy_logprob_per_tok = summed / n_tokens   # (B,)
+    n_tokens = (
+        (shifted_labels != -100).sum(dim=-1).clamp_min(1).float().to(summed.device)
+    )
+    policy_logprob_per_tok = summed / n_tokens  # (B,)
 
-    use_self_ref = (pi_ref is None and pi_ref_mode == "adapter_disabled"
-                    and hasattr(model, "disable_adapter"))
+    use_self_ref = (
+        pi_ref is None
+        and pi_ref_mode == "adapter_disabled"
+        and hasattr(model, "disable_adapter")
+    )
     if pi_ref is not None:
         with torch.no_grad():
             ref_summed = sequence_logprob(

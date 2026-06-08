@@ -9,6 +9,7 @@ so we don't load a GPU model in a cpu_only test. The target writes a sentinel
 file when ``graceful_shutdown`` fires; the test asserts it ran with the
 expected kwargs and that the subprocess exited cleanly (rc==0).
 """
+
 from __future__ import annotations
 
 import os

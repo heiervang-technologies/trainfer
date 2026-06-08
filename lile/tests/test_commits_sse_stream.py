@@ -19,6 +19,7 @@ torch-free: imports ``lile.commit_stream`` only, then builds a minimal
 FastAPI app inline that mounts the same stream-handler logic the real
 ``/v1/commits/stream`` route uses in ``lile/server.py``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -37,6 +38,7 @@ pytestmark = pytest.mark.cpu_only
 
 
 # --- helpers -----------------------------------------------------------------
+
 
 def _make_app(broadcaster: CommitBroadcaster, *, keepalive_s: float = 15.0) -> FastAPI:
     """Mount the same stream-handler logic that ``lile.server`` exposes.
@@ -107,6 +109,7 @@ def _emit_burst(b: CommitBroadcaster, k: int) -> None:
 
 # --- obligation 1: ordering invariant ---------------------------------------
 
+
 def test_ordering_two_clients_see_1_to_k_in_order() -> None:
     """Obligation 1. Burst of K commits ⇒ both clients see cursor 1..K,
     strict order, no duplicates, no gaps."""
@@ -137,6 +140,7 @@ def test_ordering_two_clients_see_1_to_k_in_order() -> None:
 
 # --- obligation 2: drop-on-full ---------------------------------------------
 
+
 def test_drop_on_full_slow_client_loses_events_fast_client_does_not() -> None:
     """Obligation 2. A slow consumer's bounded queue fills; drop counter
     surfaces; training-side (== broadcaster) never raises or blocks."""
@@ -165,6 +169,7 @@ def test_drop_on_full_slow_client_loses_events_fast_client_does_not() -> None:
 
 
 # --- obligation 3: keepalive ------------------------------------------------
+
 
 def test_keepalive_fires_when_stream_idle() -> None:
     """Obligation 3. When no commits fire, the generator yields
@@ -203,6 +208,7 @@ def test_keepalive_fires_when_stream_idle() -> None:
 
 # --- obligation 4: shutdown clean -------------------------------------------
 
+
 def test_shutdown_emits_event_and_closes_cleanly() -> None:
     """Obligation 4. After ``broadcast_shutdown`` the stream yields one
     ``event: shutdown`` frame, then the generator returns."""
@@ -231,7 +237,11 @@ def test_shutdown_emits_event_and_closes_cleanly() -> None:
         task = asyncio.create_task(gen())
         # Flush one real event first, then the shutdown sentinel.
         b.broadcast_commit(
-            cursor=1, objective="sft", loss=0.1, components={}, batch_size=1,
+            cursor=1,
+            objective="sft",
+            loss=0.1,
+            components={},
+            batch_size=1,
         )
         b.broadcast_shutdown()
         await asyncio.wait_for(task, timeout=1.0)
@@ -244,6 +254,7 @@ def test_shutdown_emits_event_and_closes_cleanly() -> None:
 
 
 # --- obligation 5: cursor semantics -----------------------------------------
+
 
 def test_event_cursor_never_exceeds_last_broadcast_call() -> None:
     """Obligation 5. The broadcaster carries the cursor value that was
@@ -263,8 +274,11 @@ def test_event_cursor_never_exceeds_last_broadcast_call() -> None:
             # `broadcast_commit(cursor=task.token, ...)`. The queue's
             # finally then advances `_completed_token` to `task.token`.
             b.broadcast_commit(
-                cursor=cursor, objective="sft", loss=0.0,
-                components={}, batch_size=1,
+                cursor=cursor,
+                objective="sft",
+                loss=0.0,
+                components={},
+                batch_size=1,
             )
             highest_broadcast = cursor
             ev = await sub.get()
@@ -281,6 +295,7 @@ def test_event_cursor_never_exceeds_last_broadcast_call() -> None:
 
 # --- misc: iso_now_ms shape pin --------------------------------------------
 
+
 def test_iso_now_ms_shape() -> None:
     """The spec pins ``ts`` to ISO 8601 UTC with millisecond precision and
     a trailing ``Z``. Clients (RLAIF loop, byte-determinism eval) depend on
@@ -288,11 +303,13 @@ def test_iso_now_ms_shape() -> None:
     """
     ts = _iso_now_ms()
     assert re.match(
-        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$", ts,
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$",
+        ts,
     ), ts
 
 
 # --- disabled config short-circuits broadcast -------------------------------
+
 
 def test_disabled_broadcaster_does_not_enqueue() -> None:
     b = CommitBroadcaster(enabled=False)

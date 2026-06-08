@@ -6,6 +6,7 @@ covered by smoke_objectives.
 
 Run: python -m lile.tests.test_unlike_trigger  (or pytest)
 """
+
 from __future__ import annotations
 
 import sys
@@ -31,8 +32,7 @@ def test_rank_low_but_prob_high_still_fires():
 
 
 def test_prob_below_threshold_and_rank_high_no_fire():
-    assert not _should_trigger(rank_bad=20, p_bad=0.02,
-                               rank_below=5, prob_above=0.1)
+    assert not _should_trigger(rank_bad=20, p_bad=0.02, rank_below=5, prob_above=0.1)
 
 
 def test_either_criterion_alone_suffices():

@@ -1,4 +1,5 @@
 """Shared helpers for objectives: tokenization, masked logprob, shape checks."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -31,9 +32,13 @@ def _to_int_list(x: Any) -> list[int]:
     return [int(v) for v in x]
 
 
-def build_chat_inputs(tokenizer: Any, prompt: str, response: str,
-                      max_len: int = 2048,
-                      span_prefix: str | None = None) -> dict[str, torch.Tensor]:
+def build_chat_inputs(
+    tokenizer: Any,
+    prompt: str,
+    response: str,
+    max_len: int = 2048,
+    span_prefix: str | None = None,
+) -> dict[str, torch.Tensor]:
     """Tokenize (prompt, response) into input_ids + labels with prompt masked out.
 
     Response tokens carry labels; prompt tokens are masked with -100 so loss
@@ -55,31 +60,42 @@ def build_chat_inputs(tokenizer: Any, prompt: str, response: str,
         # content because apply_chat_template pulls `image`/`video` entries
         # out of the list. Wrap as [{"type":"text","text":...}] when we
         # detect a Processor (has image_processor or video_processor).
-        is_processor = (hasattr(tokenizer, "image_processor")
-                        or hasattr(tokenizer, "video_processor"))
-        user_content = ([{"type": "text", "text": prompt}] if is_processor
-                        else prompt)
-        asst_content = ([{"type": "text", "text": response}] if is_processor
-                        else response)
+        is_processor = hasattr(tokenizer, "image_processor") or hasattr(
+            tokenizer, "video_processor"
+        )
+        user_content = [{"type": "text", "text": prompt}] if is_processor else prompt
+        asst_content = (
+            [{"type": "text", "text": response}] if is_processor else response
+        )
         messages_prompt = [{"role": "user", "content": user_content}]
-        messages_full = messages_prompt + [{"role": "assistant", "content": asst_content}]
+        messages_full = messages_prompt + [
+            {"role": "assistant", "content": asst_content}
+        ]
         prompt_raw = tokenizer.apply_chat_template(
-            messages_prompt, add_generation_prompt=True, tokenize=True,
+            messages_prompt,
+            add_generation_prompt=True,
+            tokenize=True,
             return_tensors=None,
         )
         full_raw = tokenizer.apply_chat_template(
-            messages_full, add_generation_prompt=False, tokenize=True,
+            messages_full,
+            add_generation_prompt=False,
+            tokenize=True,
             return_tensors=None,
         )
         prompt_ids = _to_int_list(prompt_raw)
         full_ids = _to_int_list(full_raw)
     else:
-        prompt_ids = _to_int_list(tokenizer(text=prompt, add_special_tokens=False).input_ids)
-        full_ids = _to_int_list(tokenizer(text=prompt + response, add_special_tokens=False).input_ids)
+        prompt_ids = _to_int_list(
+            tokenizer(text=prompt, add_special_tokens=False).input_ids
+        )
+        full_ids = _to_int_list(
+            tokenizer(text=prompt + response, add_special_tokens=False).input_ids
+        )
 
     full_ids = full_ids[:max_len]
     if len(prompt_ids) > len(full_ids):
-        prompt_ids = prompt_ids[:len(full_ids)]
+        prompt_ids = prompt_ids[: len(full_ids)]
 
     prefix_len = len(prompt_ids)
     if span_prefix:
@@ -98,9 +114,9 @@ def build_chat_inputs(tokenizer: Any, prompt: str, response: str,
             prefix_len = resolved
 
     labels = [-100] * prefix_len + list(full_ids[prefix_len:])
-    labels = labels[:len(full_ids)]
+    labels = labels[: len(full_ids)]
     if len(labels) < len(full_ids):
-        labels.extend(full_ids[len(labels):])
+        labels.extend(full_ids[len(labels) :])
 
     return {
         "input_ids": torch.tensor(full_ids, dtype=torch.long),
@@ -130,7 +146,7 @@ def extract_target_positions(
     B = labels.size(0)
     positions: list[list[int]] = []
     token_ids: list[list[int]] = []
-    shifted = labels[:, 1:]                                            # (B, T-1)
+    shifted = labels[:, 1:]  # (B, T-1)
     for i in range(B):
         mask = shifted[i] != -100
         pos_i = mask.nonzero(as_tuple=True)[0].tolist()
@@ -140,7 +156,9 @@ def extract_target_positions(
     return positions, token_ids
 
 
-def pad_and_stack(tokenized: list[dict[str, torch.Tensor]], pad_id: int) -> dict[str, torch.Tensor]:
+def pad_and_stack(
+    tokenized: list[dict[str, torch.Tensor]], pad_id: int
+) -> dict[str, torch.Tensor]:
     max_len = max(t["input_ids"].size(0) for t in tokenized)
     b = len(tokenized)
     ids = torch.full((b, max_len), pad_id, dtype=torch.long)
@@ -154,8 +172,12 @@ def pad_and_stack(tokenized: list[dict[str, torch.Tensor]], pad_id: int) -> dict
     return {"input_ids": ids, "labels": labels, "attention_mask": attn}
 
 
-def sequence_logprob(model: Any, input_ids: torch.Tensor, labels: torch.Tensor,
-                     attention_mask: torch.Tensor | None = None) -> torch.Tensor:
+def sequence_logprob(
+    model: Any,
+    input_ids: torch.Tensor,
+    labels: torch.Tensor,
+    attention_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
     """Sum log p(y_t | prefix) over tokens where labels != -100.
 
     Returns a (batch,) tensor of *summed* log-probs (no length norm). Divide by
@@ -169,7 +191,7 @@ def sequence_logprob(model: Any, input_ids: torch.Tensor, labels: torch.Tensor,
     attention_mask = attention_mask.to(device)
 
     out = model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
-    logits = out.logits                                # (B, T, V)
+    logits = out.logits  # (B, T, V)
     # Shift for next-token prediction.
     shift_logits = logits[:, :-1, :].contiguous()
     shift_labels = labels[:, 1:].contiguous()
@@ -182,15 +204,20 @@ def sequence_logprob(model: Any, input_ids: torch.Tensor, labels: torch.Tensor,
     flat_logits = shift_logits.reshape(B * T, V).float()
     flat_labels = shift_labels.reshape(B * T)
     # cross_entropy with ignore_index=-100 outputs 0 for masked positions.
-    neg_logprobs = F.cross_entropy(flat_logits, flat_labels, ignore_index=-100,
-                                   reduction='none')             # (B*T,)
-    token_logprobs = -neg_logprobs.reshape(B, T)                 # (B, T)
+    neg_logprobs = F.cross_entropy(
+        flat_logits, flat_labels, ignore_index=-100, reduction="none"
+    )  # (B*T,)
+    token_logprobs = -neg_logprobs.reshape(B, T)  # (B, T)
     summed = token_logprobs.sum(dim=-1)
     return summed
 
 
-def sequence_logprob_mean(model: Any, input_ids: torch.Tensor, labels: torch.Tensor,
-                          attention_mask: torch.Tensor | None = None) -> torch.Tensor:
+def sequence_logprob_mean(
+    model: Any,
+    input_ids: torch.Tensor,
+    labels: torch.Tensor,
+    attention_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
     """Length-normalized log-prob — used by CCPD v2 (§5c.11)."""
     summed = sequence_logprob(model, input_ids, labels, attention_mask)
     with torch.no_grad():

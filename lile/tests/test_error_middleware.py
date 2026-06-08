@@ -7,6 +7,7 @@ probe it with TestClient.
 
 Run with: pytest lile/tests/test_error_middleware.py
 """
+
 from __future__ import annotations
 
 import logging
@@ -86,6 +87,7 @@ def _build_app() -> FastAPI:
 
 # ---------------------------------------------------------------- request ID middleware
 
+
 def test_middleware_generates_request_id_when_header_missing():
     app = _build_app()
     with TestClient(app) as client:
@@ -114,6 +116,7 @@ def test_middleware_different_requests_get_different_ids():
 
 
 # ---------------------------------------------------------------- exception handlers
+
 
 def _assert_envelope(body: dict, *, code: str, retryable: bool) -> dict:
     assert set(body.keys()) == {"error"}
@@ -207,6 +210,7 @@ def test_pydantic_validation_error_becomes_envelope_400():
 
 # ---------------------------------------------------------------- trajectory contextvar
 
+
 def test_trajectory_stamps_request_id_when_set(tmp_path):
     from lile.middleware import _REQUEST_ID_CTX, current_request_id, set_request_id
     from lile.trajectory import TrajectoryLog
@@ -235,6 +239,7 @@ def test_trajectory_omits_request_id_when_unset(tmp_path):
 
 
 # ---------------------------------------------------------------- logging filter
+
 
 def test_log_records_carry_request_id(caplog):
     from lile.middleware import (

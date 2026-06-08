@@ -15,6 +15,7 @@ These tests build a Controller with the GPU-loading bits stubbed out — the
 ``ModelState`` is never loaded, the train engine is never instantiated — so
 they stay cpu_only. The shutdown logic is all in the control-plane path.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -100,7 +101,9 @@ def test_submit_train_rejected_after_shutdown(tmp_path):
             await c.graceful_shutdown(deadline_s=1.0)
 
             with pytest.raises(ShuttingDownError):
-                await c.submit_train({"objective": "sft", "samples": [{"prompt": "x", "response": "y"}]})
+                await c.submit_train(
+                    {"objective": "sft", "samples": [{"prompt": "x", "response": "y"}]}
+                )
 
     asyncio.run(main())
 
@@ -120,10 +123,14 @@ def test_submit_feedback_rejected_after_shutdown(tmp_path):
             await c.graceful_shutdown(deadline_s=1.0)
 
             with pytest.raises(ShuttingDownError):
-                await c.submit_feedback({
-                    "kind": "rewrite", "prompt": "x", "response": "y",
-                    "better_response": "z",
-                })
+                await c.submit_feedback(
+                    {
+                        "kind": "rewrite",
+                        "prompt": "x",
+                        "response": "y",
+                        "better_response": "z",
+                    }
+                )
 
     asyncio.run(main())
 
@@ -172,6 +179,7 @@ def test_graceful_shutdown_is_idempotent(tmp_path):
 
 def test_in_flight_pending_tasks_resolve_with_shutdown_dropped(tmp_path):
     """Waiters on unpulled tasks get ``ShutdownDroppedError`` (not a hang)."""
+
     async def main():
         from lile.errors import ShutdownDroppedError
 
@@ -184,9 +192,7 @@ def test_in_flight_pending_tasks_resolve_with_shutdown_dropped(tmp_path):
                 return {"ok": True}
 
             await c.queue.start(_slow_handler)
-            tasks = [
-                await c.queue.submit("custom", {"sleep_s": 0.5}) for _ in range(3)
-            ]
+            tasks = [await c.queue.submit("custom", {"sleep_s": 0.5}) for _ in range(3)]
             await c.graceful_shutdown(deadline_s=0.1)
             dropped = [t for t in tasks if isinstance(t.error, ShutdownDroppedError)]
             assert len(dropped) >= 1

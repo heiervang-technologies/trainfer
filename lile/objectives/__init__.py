@@ -3,6 +3,7 @@
 Objectives are composable. A batch carries a list of per-sample objectives plus
 a list of per-batch objectives. The trainer composes them into a weighted sum.
 """
+
 from __future__ import annotations
 
 from typing import Any, Callable
@@ -39,6 +40,7 @@ OBJECTIVES: dict[str, Callable[..., dict[str, Any]]] = {
 # CCPD v2 is registered conditionally in objectives/ccpd.py if import succeeds.
 try:
     from .ccpd import ccpd_v2_loss  # noqa: F401
+
     OBJECTIVES["ccpd_v2"] = ccpd_v2_loss
 except Exception:
     pass

@@ -10,6 +10,7 @@ calling :func:`extract_answer` directly. Callers that have a reference
 answer and want tolerant equivalence should use :func:`answers_match`,
 which handles fraction canonicalization and a configurable ``rtol``.
 """
+
 from __future__ import annotations
 
 import math
@@ -200,7 +201,9 @@ def answers_match(
     # Quick win: post-normalization string compare. Handles the exact-integer
     # and exact-fraction cases without paying the float-parse cost.
     ref_norm = _normalize_fraction(ref_s) if "/" in ref_s else ref_s.replace(",", "")
-    cand_norm = _normalize_fraction(cand_s) if "/" in cand_s else cand_s.replace(",", "")
+    cand_norm = (
+        _normalize_fraction(cand_s) if "/" in cand_s else cand_s.replace(",", "")
+    )
     if ref_norm == cand_norm:
         return True
 

@@ -9,6 +9,7 @@ Covers:
 - Code verifier: expected-match pass, missing code block, runtime error,
   sandbox escape (``__import__`` blocked), wall-clock timeout.
 """
+
 from __future__ import annotations
 
 import threading
@@ -48,6 +49,7 @@ def test_verify_swallows_verifier_exceptions():
 def test_register_decorator_returns_fn_unchanged():
     def _fn(p, c):
         return True
+
     try:
         wrapped = register("noop_test")(_fn)
         assert wrapped is _fn
@@ -75,15 +77,18 @@ def test_select_none_for_unclaimed_prompt():
 # ---------------------------------------------------------------- math
 
 
-@pytest.mark.parametrize("text,expected", [
-    ("The answer is 42.", "42"),
-    ("#### 17", "17"),
-    ("#### -3.50", "-3.5"),
-    ("so we get \\boxed{128}.", "128"),
-    ("Answer: 1,234", "1234"),
-    ("Step 1: 2+2=4. Final: 12", "12"),  # fallback to last number
-    ("no numbers here", None),
-])
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("The answer is 42.", "42"),
+        ("#### 17", "17"),
+        ("#### -3.50", "-3.5"),
+        ("so we get \\boxed{128}.", "128"),
+        ("Answer: 1,234", "1234"),
+        ("Step 1: 2+2=4. Final: 12", "12"),  # fallback to last number
+        ("no numbers here", None),
+    ],
+)
 def test_math_extract_answer(text, expected):
     assert extract_answer(text) == expected
 
@@ -165,26 +170,29 @@ def test_extract_fraction_prompt_hint_is_narrow():
 # passes.
 
 
-@pytest.mark.parametrize("ref,cand,expected", [
-    # Precision miss from mini-GSM8K — default rtol=1e-3 reclaims it.
-    ("43.98226", "43.98", True),
-    # Fraction == decimal.
-    ("5/8", "0.625", True),
-    ("0.625", "5/8", True),
-    # Whitespace / comma grouping.
-    ("1,234", "1234", True),
-    ("5 / 8", "5/8", True),
-    # Exact integers.
-    ("7", "7", True),
-    # Real mismatches stay false under default rtol.
-    ("42", "43", False),
-    ("5/8", "3/8", False),
-    # Unparseable strings compare False, not raise.
-    ("foo", "bar", False),
-    ("7", "seven", False),
-    # Division by zero in a fraction → False, not raise.
-    ("1/0", "1", False),
-])
+@pytest.mark.parametrize(
+    "ref,cand,expected",
+    [
+        # Precision miss from mini-GSM8K — default rtol=1e-3 reclaims it.
+        ("43.98226", "43.98", True),
+        # Fraction == decimal.
+        ("5/8", "0.625", True),
+        ("0.625", "5/8", True),
+        # Whitespace / comma grouping.
+        ("1,234", "1234", True),
+        ("5 / 8", "5/8", True),
+        # Exact integers.
+        ("7", "7", True),
+        # Real mismatches stay false under default rtol.
+        ("42", "43", False),
+        ("5/8", "3/8", False),
+        # Unparseable strings compare False, not raise.
+        ("foo", "bar", False),
+        ("7", "seven", False),
+        # Division by zero in a fraction → False, not raise.
+        ("1/0", "1", False),
+    ],
+)
 def test_answers_match_default_rtol(ref, cand, expected):
     assert answers_match(ref, cand) is expected
 

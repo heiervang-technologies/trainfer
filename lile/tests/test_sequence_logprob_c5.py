@@ -19,6 +19,7 @@ never materializes the full (B, T, V) softmax output, saving ~592 MB per call.
 This test proves numerical equivalence against random logits/labels at various
 shapes, including edge cases (all-masked, single-token, large vocab).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -28,10 +29,11 @@ import torch.nn.functional as F
 pytestmark = pytest.mark.cpu_only
 
 
-def _old_sequence_logprob_core(shift_logits: torch.Tensor,
-                               shift_labels: torch.Tensor) -> torch.Tensor:
+def _old_sequence_logprob_core(
+    shift_logits: torch.Tensor, shift_labels: torch.Tensor
+) -> torch.Tensor:
     """Original log_softmax + gather implementation (pre-C-5)."""
-    mask = (shift_labels != -100)
+    mask = shift_labels != -100
     safe_labels = shift_labels.masked_fill(~mask, 0)
     logprobs = F.log_softmax(shift_logits.float(), dim=-1)
     token_logprobs = logprobs.gather(-1, safe_labels.unsqueeze(-1)).squeeze(-1)
@@ -39,14 +41,16 @@ def _old_sequence_logprob_core(shift_logits: torch.Tensor,
     return token_logprobs.sum(dim=-1)
 
 
-def _new_sequence_logprob_core(shift_logits: torch.Tensor,
-                               shift_labels: torch.Tensor) -> torch.Tensor:
+def _new_sequence_logprob_core(
+    shift_logits: torch.Tensor, shift_labels: torch.Tensor
+) -> torch.Tensor:
     """New cross_entropy implementation (C-5)."""
     B, T, V = shift_logits.shape
     flat_logits = shift_logits.reshape(B * T, V).float()
     flat_labels = shift_labels.reshape(B * T)
-    neg_logprobs = F.cross_entropy(flat_logits, flat_labels, ignore_index=-100,
-                                   reduction='none')
+    neg_logprobs = F.cross_entropy(
+        flat_logits, flat_labels, ignore_index=-100, reduction="none"
+    )
     token_logprobs = -neg_logprobs.reshape(B, T)
     return token_logprobs.sum(dim=-1)
 
@@ -54,14 +58,17 @@ def _new_sequence_logprob_core(shift_logits: torch.Tensor,
 # ------------------------------------------------------------------ core equiv
 
 
-@pytest.mark.parametrize("B,T,V", [
-    (1, 4, 10),           # tiny
-    (2, 8, 100),          # small batch
-    (1, 1, 50),           # single token
-    (3, 16, 1000),        # medium vocab
-    (2, 32, 32000),       # realistic vocab
-    (1, 64, 152064),      # Qwen3 vocab — the real target
-])
+@pytest.mark.parametrize(
+    "B,T,V",
+    [
+        (1, 4, 10),  # tiny
+        (2, 8, 100),  # small batch
+        (1, 1, 50),  # single token
+        (3, 16, 1000),  # medium vocab
+        (2, 32, 32000),  # realistic vocab
+        (1, 64, 152064),  # Qwen3 vocab — the real target
+    ],
+)
 def test_numerical_equivalence(B: int, T: int, V: int):
     """Old and new implementations must agree to within float32 tolerance."""
     torch.manual_seed(42)
@@ -157,8 +164,7 @@ def test_gradient_equivalence():
     old.sum().backward()
     new.sum().backward()
 
-    torch.testing.assert_close(logits_old.grad, logits_new.grad,
-                               atol=1e-5, rtol=1e-5)
+    torch.testing.assert_close(logits_old.grad, logits_new.grad, atol=1e-5, rtol=1e-5)
 
 
 # ------------------------------------------------------------------ bf16 dtype

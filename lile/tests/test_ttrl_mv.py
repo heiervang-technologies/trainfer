@@ -16,6 +16,7 @@ the core assertions — ``_maybe_run_one`` is called directly.
 
 Run: pytest lile/tests/test_ttrl_mv.py -xvs
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -74,7 +75,10 @@ class _FakeController:
 
 
 def _write_inference(
-    log: TrajectoryLog, *, prompt: str, response: str = "x",
+    log: TrajectoryLog,
+    *,
+    prompt: str,
+    response: str = "x",
     ts: float | None = None,
 ) -> int:
     """Append an inference event via ``append_raw`` so tests control ``ts``."""
@@ -218,10 +222,10 @@ def test_maybe_run_one_samples_and_enqueues_majority():
         _write_inference(log, prompt="What is 2 plus 3? So how many?")
         _write_inference(log, prompt="How many coins if you have 4 and lose 1?")
         rollouts = [
-            "the result is 3",   # key "3"
-            "answer: 3",         # key "3"  ← winning majority
-            "I think it is 5",   # key "5"
-            "nope, 7",           # key "7"
+            "the result is 3",  # key "3"
+            "answer: 3",  # key "3"  ← winning majority
+            "I think it is 5",  # key "5"
+            "nope, 7",  # key "7"
         ]
         ctrl = _FakeController(log, _FakeQueue(), rollouts=rollouts)
         sched = TTRLScheduler(
@@ -268,7 +272,8 @@ def test_maybe_run_one_bumps_seen_even_when_submit_raises():
         log = TrajectoryLog(Path(td) / "t.jsonl")
         off = _write_inference(log, prompt="How many apples if Jane has 3?")
         ctrl = _FakeController(
-            log, _FakeQueue(),
+            log,
+            _FakeQueue(),
             rollouts=["answer: 3", "the result is 3"],
         )
 
@@ -293,8 +298,8 @@ def test_maybe_run_one_counts_empty_stdout_rollouts():
         # Prompt the code verifier claims.
         _write_inference(log, prompt="Write a program. Expected: hi")
         rollouts = [
-            "```python\nx = 1\n```",   # empty stdout
-            "```python\ny = 2\n```",   # empty stdout
+            "```python\nx = 1\n```",  # empty stdout
+            "```python\ny = 2\n```",  # empty stdout
         ]
         ctrl = _FakeController(log, _FakeQueue(), rollouts=rollouts)
         sched = TTRLScheduler(
@@ -330,8 +335,9 @@ def test_idle_gate_blocks_scheduler():
         ctrl = _FakeController(log, _FakeQueue(idle=False), rollouts=["answer: 1"])
         sched = TTRLScheduler(
             ctrl,
-            TTRLPolicy(min_prompts=1, k_rollouts=1, poll_interval_s=0.01,
-                       idle_threshold_s=10),
+            TTRLPolicy(
+                min_prompts=1, k_rollouts=1, poll_interval_s=0.01, idle_threshold_s=10
+            ),
         )
 
         async def run():

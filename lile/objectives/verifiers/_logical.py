@@ -16,6 +16,7 @@ Compare modes
 - ``regex``    — ``expected`` is itself a regex; ``re.fullmatch`` on the
                  extracted answer.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -27,7 +28,7 @@ from . import register
 log = logging.getLogger(__name__)
 
 _TASKS: dict[str, dict] | None = None  # task_id -> task dict
-_BY_PROMPT: dict[str, str] = {}        # sha256(prompt) -> task_id
+_BY_PROMPT: dict[str, str] = {}  # sha256(prompt) -> task_id
 
 _DEFAULT_EXTRACT = re.compile(r"(?is)Answer\s*[:=]\s*([^\n]+)")
 _TRUTHY = {"1", "true", "yes", "y", "t"}
@@ -40,6 +41,7 @@ def _load() -> None:
     if _TASKS is not None:
         return
     from lile.teach.logical import load_tasks
+
     _TASKS = {}
     for t in load_tasks():
         _TASKS[t["task_id"]] = t
@@ -90,6 +92,7 @@ def _compare(got: str, expected: str, mode: str) -> bool:
                 return float(cleaned)
             except ValueError:
                 return None
+
         ng = _num(g)
         ne = _num(e)
         return ng is not None and ne is not None and abs(ng - ne) < 1e-9

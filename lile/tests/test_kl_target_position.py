@@ -14,6 +14,7 @@ the same shape contract the real model path uses (``.logits`` attr,
 ``(B, T, V)`` tensor, accepts ``input_ids``/``attention_mask``/``use_cache``
 kwargs). Keeps the test cpu_only without needing a HF model in the cache.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -64,17 +65,23 @@ class _StubModel(nn.Module):
             self.head.bias.zero_()
 
     def forward(
-        self, input_ids: torch.Tensor,
+        self,
+        input_ids: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
-        use_cache: bool = False, **_: Any,
+        use_cache: bool = False,
+        **_: Any,
     ) -> _StubOut:
         h = self.embed(input_ids)
         return _StubOut(logits=self.head(h))
 
     def disable_adapter(self):  # noqa: D401
         class _Noop:
-            def __enter__(self_inner) -> None: return None
-            def __exit__(self_inner, *a) -> None: return None
+            def __enter__(self_inner) -> None:
+                return None
+
+            def __exit__(self_inner, *a) -> None:
+                return None
+
         return _Noop()
 
 
@@ -85,12 +92,14 @@ class _StubTokenizer:
     takes the plain-tokenize path (``tokenizer(text=…).input_ids``). That
     keeps the test independent of any HF template logic.
     """
+
     pad_token_id = 0
     eos_token_id = 0
 
     def __call__(self, text: str = "", add_special_tokens: bool = False, **_: Any):
         class _Enc:
             pass
+
         e = _Enc()
         # Deterministic token ids — one per char, modulo vocab size.
         ids = [((ord(c) % (V - 1)) + 1) for c in text]  # avoid id=0 (pad)
@@ -102,6 +111,7 @@ class _StubTokenizer:
 
 # --- obligation 1: schema-fallback parity -----------------------------------
 
+
 def test_schema_fallback_matches_explicit_exclude() -> None:
     """Per-sample {bad, good} via schema == explicit [bad, good] at batch level."""
     torch.manual_seed(0)
@@ -112,10 +122,18 @@ def test_schema_fallback_matches_explicit_exclude() -> None:
     samples = [{"prefix": "abc", "bad_token_id": 10, "good_token_id": 20}]
 
     loss_fallback = kl_anchor_loss(
-        m, tok, samples, scope="target_position", weight=1.0,
+        m,
+        tok,
+        samples,
+        scope="target_position",
+        weight=1.0,
     )
     loss_explicit = kl_anchor_loss(
-        m, tok, samples, scope="target_position", weight=1.0,
+        m,
+        tok,
+        samples,
+        scope="target_position",
+        weight=1.0,
         exclude_token_ids=[10, 20],
     )
     a = float(loss_fallback["loss"].detach())
@@ -124,6 +142,7 @@ def test_schema_fallback_matches_explicit_exclude() -> None:
 
 
 # --- obligation 2: explicit + per-sample union ------------------------------
+
 
 def test_explicit_list_unions_with_per_sample() -> None:
     excluded = _derive_exclude_ids(
@@ -140,10 +159,18 @@ def test_explicit_union_is_visible_in_components() -> None:
     samples = [{"prefix": "abc", "bad_token_id": 5, "good_token_id": 7}]
 
     narrow = kl_anchor_loss(
-        m, tok, samples, scope="target_position", weight=1.0,
+        m,
+        tok,
+        samples,
+        scope="target_position",
+        weight=1.0,
     )
     wider = kl_anchor_loss(
-        m, tok, samples, scope="target_position", weight=1.0,
+        m,
+        tok,
+        samples,
+        scope="target_position",
+        weight=1.0,
         exclude_token_ids=[11, 12, 13],
     )
     assert narrow["components"]["kl_excluded_total"] == 2
@@ -151,6 +178,7 @@ def test_explicit_union_is_visible_in_components() -> None:
 
 
 # --- obligation 3: no-exclude fallback --------------------------------------
+
 
 def test_no_exclude_runs_over_full_vocab() -> None:
     """Samples without bad/good + no explicit exclude → anchor over full vocab.
@@ -164,7 +192,11 @@ def test_no_exclude_runs_over_full_vocab() -> None:
     samples = [{"prefix": "hi"}]
 
     out = kl_anchor_loss(
-        m, tok, samples, scope="target_position", weight=1.0,
+        m,
+        tok,
+        samples,
+        scope="target_position",
+        weight=1.0,
     )
     assert out["components"]["kl_excluded_total"] == 0
     assert out["loss"].dim() == 0
@@ -182,6 +214,7 @@ def test_derive_exclude_ids_missing_fields() -> None:
 
 
 # --- obligation 4: gradient is zero on excluded logits ----------------------
+
 
 def test_gradient_zero_on_excluded_token_at_target_position() -> None:
     """Backward through the target-position KL must leave the excluded token
@@ -204,8 +237,12 @@ def test_gradient_zero_on_excluded_token_at_target_position() -> None:
     exclude_extra = [30]
 
     out = kl_anchor_loss(
-        theta, tok, samples, pi_ref=ref,
-        scope="target_position", weight=1.0,
+        theta,
+        tok,
+        samples,
+        pi_ref=ref,
+        scope="target_position",
+        weight=1.0,
         exclude_token_ids=exclude_extra,
     )
     # Sanity: loss is nonzero (else the gradient test is vacuous).
@@ -217,6 +254,7 @@ def test_gradient_zero_on_excluded_token_at_target_position() -> None:
     #
     # Rebuild the batch the same way kl_anchor_loss does (import the helper).
     from lile.objectives.kl import _tokenize_prefixes_with_last_idx
+
     batch = _tokenize_prefixes_with_last_idx(tok, samples)
     ids = batch["input_ids"]
     attn = batch["attention_mask"]
@@ -261,6 +299,7 @@ def test_gradient_zero_on_excluded_token_at_target_position() -> None:
 
 
 # --- obligation 5: existing scopes unchanged --------------------------------
+
 
 def test_scope_prompt_still_routes_through_sample_text() -> None:
     """Regression: prompt scope still hits the text branch, unchanged shape."""

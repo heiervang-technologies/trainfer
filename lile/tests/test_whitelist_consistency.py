@@ -21,6 +21,7 @@ the helper directly with synthetic ``test_*.py`` files in ``tmp_path``:
 - The AST matcher must recognize the three pytestmark shapes used in
   the real suite (bare attribute, list, tuple).
 """
+
 from __future__ import annotations
 
 import ast
@@ -60,23 +61,29 @@ conftest = _load_conftest_module()
 # ---------------------------------------------------------------- AST matcher
 
 
-@pytest.mark.parametrize("src", [
-    "import pytest\npytestmark = pytest.mark.cpu_only\n",
-    "import pytest\npytestmark = [pytest.mark.cpu_only]\n",
-    "import pytest\npytestmark = (pytest.mark.cpu_only,)\n",
-    "import pytest\npytestmark = [pytest.mark.cpu_only, pytest.mark.eval]\n",
-])
+@pytest.mark.parametrize(
+    "src",
+    [
+        "import pytest\npytestmark = pytest.mark.cpu_only\n",
+        "import pytest\npytestmark = [pytest.mark.cpu_only]\n",
+        "import pytest\npytestmark = (pytest.mark.cpu_only,)\n",
+        "import pytest\npytestmark = [pytest.mark.cpu_only, pytest.mark.eval]\n",
+    ],
+)
 def test_ast_matcher_accepts_known_shapes(src):
     assert conftest._ast_has_cpu_only_pytestmark(ast.parse(src)) is True
 
 
-@pytest.mark.parametrize("src", [
-    "import pytest\npytestmark = pytest.mark.slow\n",
-    "import pytest\n# pytestmark = pytest.mark.cpu_only (commented out)\n",
-    "import pytest\n",  # no marker at all
-    # Function-local assignment — not a module-level pytestmark.
-    "import pytest\ndef f():\n    pytestmark = pytest.mark.cpu_only\n",
-])
+@pytest.mark.parametrize(
+    "src",
+    [
+        "import pytest\npytestmark = pytest.mark.slow\n",
+        "import pytest\n# pytestmark = pytest.mark.cpu_only (commented out)\n",
+        "import pytest\n",  # no marker at all
+        # Function-local assignment — not a module-level pytestmark.
+        "import pytest\ndef f():\n    pytestmark = pytest.mark.cpu_only\n",
+    ],
+)
 def test_ast_matcher_rejects_non_matches(src):
     assert conftest._ast_has_cpu_only_pytestmark(ast.parse(src)) is False
 
@@ -91,16 +98,22 @@ def _write(tmp_path: Path, name: str, body: str) -> Path:
 
 
 def test_probe_flags_stdlib_only_cpu_only_not_in_whitelist(tmp_path):
-    _write(tmp_path, "test_new_cpu_only.py",
-           "import pytest\npytestmark = pytest.mark.cpu_only\n"
-           "def test_ok():\n    assert 1 == 1\n")
+    _write(
+        tmp_path,
+        "test_new_cpu_only.py",
+        "import pytest\npytestmark = pytest.mark.cpu_only\n"
+        "def test_ok():\n    assert 1 == 1\n",
+    )
     v = conftest._cpu_only_whitelist_violations(tmp_path, whitelist=set())
     assert v == ["test_new_cpu_only.py"]
 
 
 def test_probe_ignores_whitelisted_file(tmp_path):
-    _write(tmp_path, "test_already_in.py",
-           "import pytest\npytestmark = pytest.mark.cpu_only\n")
+    _write(
+        tmp_path,
+        "test_already_in.py",
+        "import pytest\npytestmark = pytest.mark.cpu_only\n",
+    )
     v = conftest._cpu_only_whitelist_violations(
         tmp_path, whitelist={"test_already_in.py"}
     )
@@ -111,8 +124,7 @@ def test_probe_ignores_file_without_cpu_only_marker(tmp_path):
     # Stdlib-only, imports cleanly, but no pytestmark. This is the shape
     # of a torch-requiring test that simply forgot the marker — the
     # whitelist can't possibly know about it and shouldn't be asked to.
-    _write(tmp_path, "test_unmarked.py",
-           "def test_ok():\n    assert True\n")
+    _write(tmp_path, "test_unmarked.py", "def test_ok():\n    assert True\n")
     v = conftest._cpu_only_whitelist_violations(tmp_path, whitelist=set())
     assert v == []
 
@@ -121,10 +133,13 @@ def test_probe_filters_file_that_raises_importerror(tmp_path):
     # Marked cpu_only but would-be-collection-time imports fail — this
     # is the "heavy dep at module scope" case. The helper must NOT flag
     # it, because adding it to the whitelist would break torchless CI.
-    _write(tmp_path, "test_needs_torch.py",
-           "import pytest\n"
-           "import __nonexistent_heavy_dep__  # simulates `import torch`\n"
-           "pytestmark = pytest.mark.cpu_only\n")
+    _write(
+        tmp_path,
+        "test_needs_torch.py",
+        "import pytest\n"
+        "import __nonexistent_heavy_dep__  # simulates `import torch`\n"
+        "pytestmark = pytest.mark.cpu_only\n",
+    )
     v = conftest._cpu_only_whitelist_violations(tmp_path, whitelist=set())
     assert v == []
 
@@ -133,10 +148,13 @@ def test_probe_still_flags_file_with_non_importerror(tmp_path):
     # Marked cpu_only, imports cleanly, then hits a non-ImportError at
     # module scope (e.g. a runtime bug in a helper). The module surface
     # is real, pytest would see it, so the whitelist should cover it.
-    _write(tmp_path, "test_buggy_but_importable.py",
-           "import pytest\n"
-           "pytestmark = pytest.mark.cpu_only\n"
-           "raise RuntimeError('module-scope bug')\n")
+    _write(
+        tmp_path,
+        "test_buggy_but_importable.py",
+        "import pytest\n"
+        "pytestmark = pytest.mark.cpu_only\n"
+        "raise RuntimeError('module-scope bug')\n",
+    )
     v = conftest._cpu_only_whitelist_violations(tmp_path, whitelist=set())
     assert v == ["test_buggy_but_importable.py"]
 
@@ -145,8 +163,9 @@ def test_probe_tolerates_syntax_error(tmp_path):
     # An unparseable file shouldn't crash the probe — just skip it.
     _write(tmp_path, "test_broken.py", "def oops(:\n    pass\n")
     # Also add a clean violation to prove the loop keeps going.
-    _write(tmp_path, "test_clean.py",
-           "import pytest\npytestmark = pytest.mark.cpu_only\n")
+    _write(
+        tmp_path, "test_clean.py", "import pytest\npytestmark = pytest.mark.cpu_only\n"
+    )
     v = conftest._cpu_only_whitelist_violations(tmp_path, whitelist=set())
     assert v == ["test_clean.py"]
 
@@ -154,8 +173,7 @@ def test_probe_tolerates_syntax_error(tmp_path):
 def test_probe_ignores_non_test_files(tmp_path):
     # Helpers named ``foo.py`` or ``_foo.py`` are not picked up by
     # pytest's default discovery; the probe only scans ``test_*.py``.
-    _write(tmp_path, "helper.py",
-           "import pytest\npytestmark = pytest.mark.cpu_only\n")
+    _write(tmp_path, "helper.py", "import pytest\npytestmark = pytest.mark.cpu_only\n")
     v = conftest._cpu_only_whitelist_violations(tmp_path, whitelist=set())
     assert v == []
 

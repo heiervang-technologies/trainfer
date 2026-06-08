@@ -2,6 +2,7 @@
 
 Run with: pytest lile/tests/test_queue_admission.py
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -18,10 +19,10 @@ pytestmark = pytest.mark.cpu_only
 async def _scenario_batch_too_large() -> None:
     cfg = ServeConfig(max_samples_per_train_call=10)
     c = Controller(cfg)
-    
+
     spec = {
         "objective": "sft",
-        "samples": [{"prompt": f"p{i}", "response": f"r{i}"} for i in range(11)]
+        "samples": [{"prompt": f"p{i}", "response": f"r{i}"} for i in range(11)],
     }
     try:
         await c.submit_train(spec)
@@ -34,15 +35,12 @@ async def _scenario_queue_full() -> None:
     cfg = ServeConfig(max_queue_depth=2)
     c = Controller(cfg)
     c.train_engine = MagicMock()
-    
+
     # Manually fill the queue without starting the worker thread.
     await c.queue.try_submit("train", {"objective": "sft", "samples": [{"a": 1}]})
     await c.queue.try_submit("train", {"objective": "sft", "samples": [{"a": 2}]})
-    
-    spec = {
-        "objective": "sft",
-        "samples": [{"prompt": "p", "response": "r"}]
-    }
+
+    spec = {"objective": "sft", "samples": [{"prompt": "p", "response": "r"}]}
     try:
         await c.submit_train(spec)
         assert False, "Should have raised QueueFullError"
@@ -53,11 +51,11 @@ async def _scenario_queue_full() -> None:
 async def _scenario_chunking_honors_queue_depth() -> None:
     cfg = ServeConfig(max_queue_depth=2)
     c = Controller(cfg)
-    
+
     spec = {
         "objective": "sft",
         "samples": [{"a": i} for i in range(4)],
-        "chunk_size": 2
+        "chunk_size": 2,
     }
     res = await c.submit_train(spec)
     assert res["n_chunks"] == 2
@@ -66,7 +64,7 @@ async def _scenario_chunking_honors_queue_depth() -> None:
     spec2 = {
         "objective": "sft",
         "samples": [{"a": i} for i in range(2)],
-        "chunk_size": 2
+        "chunk_size": 2,
     }
     try:
         await c.submit_train(spec2)
@@ -88,4 +86,5 @@ def test_queue_admission() -> None:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(asyncio.run(main()))

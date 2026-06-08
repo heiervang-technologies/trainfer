@@ -13,25 +13,28 @@ backoff on `True`); the server itself does not retry.
 
 See issue #12 for the full rationale.
 """
+
 from __future__ import annotations
 
 from typing import Any
 
 # Closed-enum taxonomy. Read by clients, referenced by tests. Add new codes
 # here and in the table below; never remove.
-ERROR_CODES: frozenset[str] = frozenset({
-    "invalid_input",
-    "unknown_objective",
-    "unknown_response_id",
-    "not_found",
-    "queue_full",
-    "rate_limited",
-    "batch_too_large",
-    "shutting_down",
-    "shutdown_dropped",
-    "timeout",
-    "internal",
-})
+ERROR_CODES: frozenset[str] = frozenset(
+    {
+        "invalid_input",
+        "unknown_objective",
+        "unknown_response_id",
+        "not_found",
+        "queue_full",
+        "rate_limited",
+        "batch_too_large",
+        "shutting_down",
+        "shutdown_dropped",
+        "timeout",
+        "internal",
+    }
+)
 
 
 class LileError(Exception):
@@ -129,5 +132,5 @@ def envelope_payload(
     }
     if retry_after_ms is not None:
         err["retry_after_ms"] = retry_after_ms
-        
+
     return {"error": err}

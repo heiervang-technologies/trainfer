@@ -12,6 +12,7 @@ prompt. Any bf16-level noise is permitted; a regression to *base* behavior
 
 Run with: python -m lile.tests.test_residual_live_path
 """
+
 from __future__ import annotations
 
 import os
@@ -28,20 +29,33 @@ from lile.engine.train import TrainEngine
 
 def _greedy_logprob(state: ModelState, prompt: str, target: str) -> float:
     """Sum log p(target | prompt) under the live model. No-grad."""
-    from lile.objectives._utils import build_chat_inputs, pad_and_stack, sequence_logprob
+    from lile.objectives._utils import (
+        build_chat_inputs,
+        pad_and_stack,
+        sequence_logprob,
+    )
+
     tok = build_chat_inputs(state.tokenizer, prompt, target)
     pad_id = state.tokenizer.pad_token_id or state.tokenizer.eos_token_id or 0
     batch = pad_and_stack([tok], pad_id=pad_id)
     with torch.no_grad():
-        return float(sequence_logprob(state.model, batch["input_ids"],
-                                      batch["labels"], batch["attention_mask"])[0])
+        return float(
+            sequence_logprob(
+                state.model,
+                batch["input_ids"],
+                batch["labels"],
+                batch["attention_mask"],
+            )[0]
+        )
 
 
 def test_residual_applied_live():
     print("[live-res] loading Qwen3-0.6B …")
     state = ModelState.load(
         model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
-        max_seq_length=1024, lora_rank=8, lora_alpha=16,
+        max_seq_length=1024,
+        lora_rank=8,
+        lora_alpha=16,
     )
     engine = TrainEngine(state, lr=1e-4)
 
@@ -54,14 +68,17 @@ def test_residual_applied_live():
 
     # Train until loss moves visibly.
     for _ in range(10):
-        engine.step({
-            "objective": "sft",
-            "samples": [{"prompt": prompt, "response": target}],
-        })
+        engine.step(
+            {
+                "objective": "sft",
+                "samples": [{"prompt": prompt, "response": target}],
+            }
+        )
     trained_lp = _greedy_logprob(state, prompt, target)
     print(f"[live-res] trained (adapter active) logprob: {trained_lp:.3f}")
-    assert trained_lp > base_lp + 1.0, \
+    assert trained_lp > base_lp + 1.0, (
         f"training failed to move logprob (base={base_lp:.3f}, trained={trained_lp:.3f})"
+    )
 
     # Merge the adapter into the CPU bf16 residual. Active adapter is now zero.
     # Without the matmul_lora residual patch, the forward would collapse back
@@ -79,8 +96,9 @@ def test_residual_applied_live():
     # The merged path should preserve most of the training signal. bf16 path
     # introduces some drift (non-associative intermediate rounding) but the
     # post-merge logprob must be much closer to trained than to base.
-    assert merged_lp > base_lp + 0.5, \
+    assert merged_lp > base_lp + 0.5, (
         f"residual not applied at forward: merged={merged_lp:.3f} ~ base={base_lp:.3f}"
+    )
     drift = abs(merged_lp - trained_lp)
     print(f"[live-res] drift (trained→merged): {drift:.3f}")
     # Loose tolerance — the residual is stored in bf16 and Unsloth's kernel

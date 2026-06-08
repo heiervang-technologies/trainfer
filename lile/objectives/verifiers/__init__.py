@@ -25,6 +25,7 @@ Registering a custom verifier:
     def verify(prompt: str, candidate: str) -> bool | float | None:
         ...
 """
+
 from __future__ import annotations
 
 import logging
@@ -40,9 +41,11 @@ VERIFIERS: dict[str, Verifier] = {}
 
 def register(domain: str) -> Callable[[Verifier], Verifier]:
     """Decorator that registers ``fn`` as the verifier for ``domain``."""
+
     def _wrap(fn: Verifier) -> Verifier:
         VERIFIERS[domain] = fn
         return fn
+
     return _wrap
 
 

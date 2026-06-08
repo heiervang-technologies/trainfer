@@ -9,4 +9,5 @@ def install() -> None:
     before constructing a ModelState (e.g. offline snapshot inspection that
     subsequently instantiates the model)."""
     from .state import install as _install
+
     _install()

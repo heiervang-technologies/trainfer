@@ -6,6 +6,7 @@ distribution shape we control.
 
 Run: python -m lile.tests.test_unlike_loss  (or pytest)
 """
+
 from __future__ import annotations
 
 import sys
@@ -27,6 +28,7 @@ HIDDEN = 8
 
 class StubTokenizer:
     """No chat_template, no special tokens — just word-level IDs."""
+
     chat_template = None
     pad_token_id = 0
     eos_token_id = 0
@@ -46,6 +48,7 @@ class StubTokenizer:
 
 class StubModel(nn.Module):
     """Linear over a tiny embedding — produces deterministic logits from ids."""
+
     def __init__(self, target_token: int | None = None) -> None:
         super().__init__()
         self.embed = nn.Embedding(VOCAB_SIZE, HIDDEN)
@@ -58,8 +61,12 @@ class StubModel(nn.Module):
                 self.head.bias.zero_()
                 self.head.bias[target_token] = 10.0
 
-    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor | None = None,
-                use_cache: bool = False) -> Any:
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        use_cache: bool = False,
+    ) -> Any:
         h = self.embed(input_ids)
         logits = self.head(h)
         return SimpleNamespace(logits=logits)
@@ -72,9 +79,9 @@ def test_triggered_sample_contributes_positive_loss():
     bad = 7
     model = StubModel(target_token=bad)
     out = unlike_loss(
-        model=model, tokenizer=tok,
-        samples=[{"prefix": "hello world", "bad_token_id": bad,
-                  "rank_below": 5}],
+        model=model,
+        tokenizer=tok,
+        samples=[{"prefix": "hello world", "bad_token_id": bad, "rank_below": 5}],
     )
     assert out["components"]["unlike_triggered"] == 1
     assert out["loss"].item() > 0.1
@@ -88,9 +95,16 @@ def test_non_triggered_sample_zero_ul():
     # Target a DIFFERENT token than "bad" so p_bad is tiny.
     model = StubModel(target_token=3)
     out = unlike_loss(
-        model=model, tokenizer=tok,
-        samples=[{"prefix": "hello world", "bad_token_id": 7,
-                  "rank_below": 1, "prob_above": 0.9}],
+        model=model,
+        tokenizer=tok,
+        samples=[
+            {
+                "prefix": "hello world",
+                "bad_token_id": 7,
+                "rank_below": 1,
+                "prob_above": 0.9,
+            }
+        ],
     )
     assert out["components"]["unlike_triggered"] == 0
     assert out["loss"].item() == pytest.approx(0.0, abs=1e-6)
@@ -102,10 +116,17 @@ def test_positive_teacher_fires_even_when_not_triggered():
     tok = StubTokenizer()
     model = StubModel(target_token=3)
     out = unlike_loss(
-        model=model, tokenizer=tok,
-        samples=[{"prefix": "hello world", "bad_token_id": 7,
-                  "good_token_id": 11,
-                  "rank_below": 1, "prob_above": 0.9}],
+        model=model,
+        tokenizer=tok,
+        samples=[
+            {
+                "prefix": "hello world",
+                "bad_token_id": 7,
+                "good_token_id": 11,
+                "rank_below": 1,
+                "prob_above": 0.9,
+            }
+        ],
     )
     # Not triggered but positive teacher runs.
     assert out["components"]["unlike_triggered"] == 0
@@ -121,12 +142,21 @@ def test_mixed_batch_only_triggered_samples_contribute_ul():
     # other token is tied at logit 0. Use rank_below=1 (strict argmax-only)
     # so the non-matching sample does not trigger by rank either.
     out = unlike_loss(
-        model=model, tokenizer=tok,
+        model=model,
+        tokenizer=tok,
         samples=[
-            {"prefix": "hello world", "bad_token_id": 5,
-             "rank_below": 1, "prob_above": None},                        # argmax-hit
-            {"prefix": "foo bar baz", "bad_token_id": 9,
-             "rank_below": 1, "prob_above": None},                        # rank>=1, no trigger
+            {
+                "prefix": "hello world",
+                "bad_token_id": 5,
+                "rank_below": 1,
+                "prob_above": None,
+            },  # argmax-hit
+            {
+                "prefix": "foo bar baz",
+                "bad_token_id": 9,
+                "rank_below": 1,
+                "prob_above": None,
+            },  # rank>=1, no trigger
         ],
     )
     assert out["components"]["unlike_triggered"] == 1
@@ -141,9 +171,9 @@ def test_gradient_flows_into_model():
     model = StubModel(target_token=bad)
     model.zero_grad()
     out = unlike_loss(
-        model=model, tokenizer=tok,
-        samples=[{"prefix": "hello world", "bad_token_id": bad,
-                  "rank_below": 5}],
+        model=model,
+        tokenizer=tok,
+        samples=[{"prefix": "hello world", "bad_token_id": bad, "rank_below": 5}],
     )
     out["loss"].backward()
     # The bad-token bias should have received a positive gradient (since we

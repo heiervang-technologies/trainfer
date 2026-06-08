@@ -6,6 +6,7 @@ C-3: reset_optimizer() must clear the KTO z0 EMA so stale drift info
 C-8: OOM (or any exception) during backward/step must clean up stale
      gradients and free CUDA cache to prevent cascading failures.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -69,6 +70,7 @@ def test_z0_ema_survives_normal_operation():
 
 class _FakeModel(nn.Module):
     """Minimal model with one trainable parameter for OOM testing."""
+
     def __init__(self):
         super().__init__()
         self.w = nn.Parameter(torch.randn(4, 4))
@@ -109,21 +111,23 @@ def test_oom_during_backward_cleans_up_gradients():
         return {"loss": loss, "components": {}}
 
     # Hide bitsandbytes so the engine uses plain AdamW (works on CPU).
-    with patch("lile.engine.train.get_objective", return_value=fake_objective), \
-         patch.dict("sys.modules", {"bitsandbytes": None}):
+    with (
+        patch("lile.engine.train.get_objective", return_value=fake_objective),
+        patch.dict("sys.modules", {"bitsandbytes": None}),
+    ):
         # Clear cached optimizer so it rebuilds without bnb.
         engine._opts.clear()
         with pytest.raises(RuntimeError, match="CUDA out of memory"):
-            engine.step({
-                "objective": "sft",
-                "samples": [{"prompt": "hi", "response": "hello"}],
-            })
+            engine.step(
+                {
+                    "objective": "sft",
+                    "samples": [{"prompt": "hi", "response": "hello"}],
+                }
+            )
 
     # The optimizer should have been created and zero_grad called.
     # Verify gradients were cleaned up (set_to_none=True sets grad to None).
-    assert model.w.grad is None, (
-        "C-8: stale gradients not cleaned up after OOM"
-    )
+    assert model.w.grad is None, "C-8: stale gradients not cleaned up after OOM"
 
 
 def test_oom_during_step_cleans_up():
@@ -138,8 +142,10 @@ def test_oom_during_step_cleans_up():
         return {"loss": loss_val, "components": {}}
 
     # Hide bnb, then break step.
-    with patch("lile.engine.train.get_objective", return_value=fake_objective), \
-         patch.dict("sys.modules", {"bitsandbytes": None}):
+    with (
+        patch("lile.engine.train.get_objective", return_value=fake_objective),
+        patch.dict("sys.modules", {"bitsandbytes": None}),
+    ):
         engine._opts.clear()
 
         def broken_step(self_opt, *args, **kwargs):
@@ -147,10 +153,12 @@ def test_oom_during_step_cleans_up():
 
         with patch.object(torch.optim.AdamW, "step", broken_step):
             with pytest.raises(RuntimeError, match="CUDA out of memory"):
-                engine.step({
-                    "objective": "sft",
-                    "samples": [{"prompt": "hi", "response": "hello"}],
-                })
+                engine.step(
+                    {
+                        "objective": "sft",
+                        "samples": [{"prompt": "hi", "response": "hello"}],
+                    }
+                )
 
     # Gradients should be cleaned up.
     assert model.w.grad is None, "C-8: gradients not cleaned after step() OOM"
@@ -167,30 +175,34 @@ def test_oom_does_not_corrupt_next_step():
         if call_count[0] == 1:
             # First call: produce a loss that OOMs during backward.
             loss = MagicMock()
-            loss.backward = MagicMock(
-                side_effect=RuntimeError("CUDA out of memory")
-            )
+            loss.backward = MagicMock(side_effect=RuntimeError("CUDA out of memory"))
             return {"loss": loss, "components": {}}
         else:
             # Second call: normal loss.
             return {"loss": model_arg.w.sum(), "components": {}}
 
-    with patch("lile.engine.train.get_objective", return_value=fake_objective), \
-         patch.dict("sys.modules", {"bitsandbytes": None}):
+    with (
+        patch("lile.engine.train.get_objective", return_value=fake_objective),
+        patch.dict("sys.modules", {"bitsandbytes": None}),
+    ):
         engine._opts.clear()
 
         # First step: OOM.
         with pytest.raises(RuntimeError, match="CUDA out of memory"):
-            engine.step({
-                "objective": "sft",
-                "samples": [{"prompt": "hi", "response": "hello"}],
-            })
+            engine.step(
+                {
+                    "objective": "sft",
+                    "samples": [{"prompt": "hi", "response": "hello"}],
+                }
+            )
 
         # Second step: should succeed without cascading failures.
-        result = engine.step({
-            "objective": "sft",
-            "samples": [{"prompt": "hi", "response": "hello"}],
-        })
+        result = engine.step(
+            {
+                "objective": "sft",
+                "samples": [{"prompt": "hi", "response": "hello"}],
+            }
+        )
 
     assert result["loss"] is not None, "step after OOM should succeed"
     assert not result.get("skipped", False), "step after OOM should not be skipped"

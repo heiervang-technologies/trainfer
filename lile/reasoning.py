@@ -34,6 +34,7 @@ Borrowed from vllm's ``BaseThinkingReasoningParser`` pattern
 delta model rather than token-ID model since HF's streamer abstracts IDs
 away.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -119,7 +120,7 @@ class ParserState:
                     # open with <think> immediately).
                     if idx:
                         c_out.append(self.buf[:idx])
-                    self.buf = self.buf[idx + len(tag):]
+                    self.buf = self.buf[idx + len(tag) :]
                     self.mode = "reasoning"
                     continue
                 # Hold enough tail to still recognise a split ``<think``.
@@ -134,7 +135,7 @@ class ParserState:
                 if idx >= 0:
                     if idx:
                         r_out.append(self.buf[:idx])
-                    self.buf = self.buf[idx + len(tag):]
+                    self.buf = self.buf[idx + len(tag) :]
                     self.mode = "content"
                     continue
                 hold = len(tag) - 1
@@ -169,15 +170,21 @@ _FAMILIES: list[tuple[tuple[str, ...], ReasoningParser]] = [
     # Qwen3 / Qwen3.5 — chat template places <think> in prompt.
     (("qwen3",), ReasoningParser(start_in_prompt=True)),
     # DeepSeek-R1 family — model emits <think> itself.
-    (("deepseek-r1", "deepseek_r1", "r1-distill"), ReasoningParser(start_in_prompt=False)),
+    (
+        ("deepseek-r1", "deepseek_r1", "r1-distill"),
+        ReasoningParser(start_in_prompt=False),
+    ),
     # Mistral Magistral reasoning models.
     (("magistral",), ReasoningParser(start_in_prompt=False)),
     # gpt-oss uses a different delimiter pair.
-    (("gpt-oss",), ReasoningParser(
-        start_token="<|channel|>analysis<|message|>",
-        end_token="<|end|>",
-        start_in_prompt=False,
-    )),
+    (
+        ("gpt-oss",),
+        ReasoningParser(
+            start_token="<|channel|>analysis<|message|>",
+            end_token="<|end|>",
+            start_in_prompt=False,
+        ),
+    ),
 ]
 
 

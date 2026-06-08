@@ -9,6 +9,7 @@ C-6: Loading a snapshot with empty residual over a model that had a non-empty
 These tests use a synthetic model with LoRA-like structure (no GPU, no Unsloth)
 to verify the snapshot load path actually binds/clears the residual.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -27,6 +28,7 @@ pytestmark = pytest.mark.cpu_only
 
 class FakeBaseLayer(nn.Module):
     """Mimics a PEFT base_layer with a weight Parameter."""
+
     def __init__(self, out_f: int, in_f: int):
         super().__init__()
         self.weight = nn.Parameter(torch.randn(out_f, in_f))
@@ -37,6 +39,7 @@ class FakeBaseLayer(nn.Module):
 
 class FakeLoraLayer(nn.Module):
     """Mimics a PEFT LoRA layer with lora_A/lora_B dicts and a base_layer."""
+
     def __init__(self, out_f: int, in_f: int, rank: int = 4):
         super().__init__()
         self.base_layer = FakeBaseLayer(out_f, in_f)
@@ -49,6 +52,7 @@ class FakeLoraLayer(nn.Module):
 
 class FakeModel(nn.Module):
     """Minimal model with LoRA-like structure for testing residual binding."""
+
     def __init__(self):
         super().__init__()
         self.layer0 = FakeLoraLayer(8, 8)
@@ -101,10 +105,12 @@ def test_snapshot_load_applies_residual_to_model():
         mgr.load("with_residual", state)
 
         # Verify residual is now bound on the live model.
-        assert hasattr(state.model.layer0.base_layer.weight, "_residual_delta"), \
+        assert hasattr(state.model.layer0.base_layer.weight, "_residual_delta"), (
             "C-1: _residual_delta not bound on layer0 after snapshot load"
-        assert hasattr(state.model.layer1.base_layer.weight, "_residual_delta"), \
+        )
+        assert hasattr(state.model.layer1.base_layer.weight, "_residual_delta"), (
             "C-1: _residual_delta not bound on layer1 after snapshot load"
+        )
         assert state.merges_applied == 1
 
 
@@ -129,8 +135,9 @@ def test_snapshot_load_registers_forward_hooks():
         mgr.load("hooked", state)
 
         # Forward hooks must be registered.
-        assert len(state._residual_hook_handles) > 0, \
+        assert len(state._residual_hook_handles) > 0, (
             "C-1: no forward hooks registered after snapshot load with residual"
+        )
 
 
 def test_snapshot_load_residual_affects_forward():
@@ -163,8 +170,9 @@ def test_snapshot_load_residual_affects_forward():
 
         # The output should be different from base (residual adds F.linear(x, delta)).
         diff = (loaded_out - base_out).abs().sum().item()
-        assert diff > 1.0, \
+        assert diff > 1.0, (
             f"C-1: residual did not affect forward pass (diff={diff:.4f})"
+        )
 
 
 # ------------------------------------------------------------------ C-6 tests
@@ -210,10 +218,12 @@ def test_snapshot_load_empty_clears_stale_hooks():
 
         # Verify: no residual deltas, no hooks, no _residual_delta attrs.
         assert state.merged_deltas == {}
-        assert len(state._residual_hook_handles) == 0, \
+        assert len(state._residual_hook_handles) == 0, (
             "C-6: stale hook handles not cleared after loading empty-residual snapshot"
-        assert not hasattr(state.model.layer0.base_layer.weight, "_residual_delta"), \
+        )
+        assert not hasattr(state.model.layer0.base_layer.weight, "_residual_delta"), (
             "C-6: stale _residual_delta not removed after loading empty-residual snapshot"
+        )
 
 
 def test_snapshot_load_empty_restores_clean_forward():
@@ -254,8 +264,9 @@ def test_snapshot_load_empty_restores_clean_forward():
         with torch.no_grad():
             clean_out = state.model.layer0.base_layer(x)
         diff = (clean_out - base_out).abs().sum().item()
-        assert diff < 1e-5, \
+        assert diff < 1e-5, (
             f"C-6: forward not restored to baseline after clean snapshot (diff={diff:.6f})"
+        )
 
 
 # ------------------------------------------------------------------ round-trip

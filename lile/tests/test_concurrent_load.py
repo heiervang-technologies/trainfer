@@ -11,6 +11,7 @@ Controller and asserts the commit-cursor invariant holds under contention:
 
 Run with: python -m lile.tests.test_concurrent_load
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -32,7 +33,8 @@ async def _chat(ctl: Controller, i: int, token: int | None) -> tuple[int, int, f
     t0 = time.time()
     result = await ctl.generate(
         [{"role": "user", "content": f"Fact #{i}:"}],
-        max_new_tokens=6, temperature=0.3,
+        max_new_tokens=6,
+        temperature=0.3,
         after_commit_token=token,
     )
     # Return the cursor at the moment the call completed.
@@ -46,8 +48,10 @@ async def _train(ctl: Controller, i: int) -> int:
         "objective": "sft",
         "chunk_size": 1,
         "samples": [
-            {"prompt": f"Fact #{i}:",
-             "response": f" Answer_{i} is the canonical reply."},
+            {
+                "prompt": f"Fact #{i}:",
+                "response": f" Answer_{i} is the canonical reply.",
+            },
         ],
     }
     submit = await ctl.submit_train(spec)
@@ -58,7 +62,9 @@ async def main_async() -> int:
     data_dir = pathlib.Path(tempfile.mkdtemp(prefix="lile_concurrent_"))
     cfg = ServeConfig(
         model="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
-        max_seq_length=1024, lora_rank=8, lora_alpha=16,
+        max_seq_length=1024,
+        lora_rank=8,
+        lora_alpha=16,
         data_dir=data_dir,
     )
     ctl = Controller(cfg)
@@ -84,8 +90,7 @@ async def main_async() -> int:
 
         # And one more round of trains interleaved to stress the queue.
         extra_train_tasks = [
-            asyncio.create_task(_train(ctl, i + n_trains))
-            for i in range(4)
+            asyncio.create_task(_train(ctl, i + n_trains)) for i in range(4)
         ]
 
         chat_results = await asyncio.gather(*chat_tasks)
@@ -97,21 +102,23 @@ async def main_async() -> int:
         # Invariants.
         # 1) Strict monotone tokens.
         all_tokens = sorted(train_tokens)
-        assert all_tokens == list(sorted(set(all_tokens))), \
+        assert all_tokens == list(sorted(set(all_tokens))), (
             f"duplicate commit tokens: {train_tokens}"
-        assert all_tokens == list(range(all_tokens[0], all_tokens[-1] + 1)), \
+        )
+        assert all_tokens == list(range(all_tokens[0], all_tokens[-1] + 1)), (
             f"non-contiguous tokens: {all_tokens}"
+        )
 
         # 2) Every chat with after_commit_token got a cursor >= that token.
         for j, cursor, latency in chat_results:
             if j % 2 == 0:
                 want = train_tokens[j % n_trains]
-                assert cursor >= want, \
-                    f"chat {j} cursor={cursor} but needed >= {want}"
+                assert cursor >= want, f"chat {j} cursor={cursor} but needed >= {want}"
 
         # 3) Final cursor should have advanced to cover all submitted trains.
-        assert ctl.queue.committed >= max(train_tokens), \
+        assert ctl.queue.committed >= max(train_tokens), (
             f"final cursor {ctl.queue.committed} < max token {max(train_tokens)}"
+        )
 
         # 4) Wall time bound. 10 chats + 10 trains on Qwen3-0.6B should comfortably
         # finish in <180 s; allow 300 s for noisy CI.
@@ -121,13 +128,17 @@ async def main_async() -> int:
         events = list(ctl.trajectory.iter_events())
         train_events = [e for e in events if e["kind"] == "train_step"]
         infer_events = [e for e in events if e["kind"] == "inference"]
-        assert len(train_events) == len(train_tokens), \
+        assert len(train_events) == len(train_tokens), (
             f"expected {len(train_tokens)} train_step events, got {len(train_events)}"
-        assert len(infer_events) == n_chats, \
+        )
+        assert len(infer_events) == n_chats, (
             f"expected {n_chats} inference events, got {len(infer_events)}"
+        )
 
-        print(f"[concurrent] OK — {n_chats} chats + {len(train_tokens)} trains in {wall:.1f}s; "
-              f"final cursor={ctl.queue.committed}")
+        print(
+            f"[concurrent] OK — {n_chats} chats + {len(train_tokens)} trains in {wall:.1f}s; "
+            f"final cursor={ctl.queue.committed}"
+        )
         # Observed latencies (mostly useful as an FYI).
         max_lat = max(r[2] for r in chat_results)
         mean_lat = sum(r[2] for r in chat_results) / len(chat_results)

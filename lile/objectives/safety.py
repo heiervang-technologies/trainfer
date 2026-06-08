@@ -41,6 +41,7 @@ without them (main objective has not opted in), raise ``RuntimeError``
 with the pinned message. Primitive orthogonality: main objective owns
 position geometry, sidecar owns the Razin-safety computation.
 """
+
 from __future__ import annotations
 
 import warnings
@@ -67,7 +68,7 @@ def _m_p_value(pi: torch.Tensor, t: int, eta: float) -> float:
     V = pi.size(0)
     indicator = torch.zeros(V, dtype=pi.dtype, device=pi.device)
     indicator[t] = 1.0
-    log_pi = pi.clamp_min(1e-45).log()                                 # avoid -inf
+    log_pi = pi.clamp_min(1e-45).log()  # avoid -inf
     beta = indicator - pi
     log_Z = torch.logsumexp(log_pi + eta * beta, dim=0)
     return float(-(1.0 / eta) * log_Z)
@@ -131,7 +132,8 @@ def safety_monitor_loss(
         warnings.warn(
             f"safety_monitor is observational; weight={weight!r} coerced to 0.0. "
             "Loss never contributes to gradient.",
-            RuntimeWarning, stacklevel=2,
+            RuntimeWarning,
+            stacklevel=2,
         )
 
     # Always-zero loss tensor that survives backward through any composition.
@@ -177,7 +179,7 @@ def safety_monitor_loss(
         ids_dev = input_ids.to(device)
         attn_dev = attention_mask.to(device) if attention_mask is not None else None
         out = model(input_ids=ids_dev, attention_mask=attn_dev, use_cache=False)
-        logits = out.logits.float()                                    # (B, T, V)
+        logits = out.logits.float()  # (B, T, V)
 
     M_p_vals: list[float] = []
     grower_sizes: list[int] = []
@@ -194,7 +196,7 @@ def safety_monitor_loss(
                 f"does not match target_token_ids length {len(tokens)}",
             )
         for p, t in zip(positions, tokens):
-            pi = F.softmax(logits[i, p], dim=-1)                       # (V,)
+            pi = F.softmax(logits[i, p], dim=-1)  # (V,)
             mp = _m_p_value(pi, int(t), float(effective_lr))
             idx = torch.arange(pi.size(0), device=pi.device)
             grower_mask = (pi < mp) & (idx != int(t))
@@ -207,7 +209,7 @@ def safety_monitor_loss(
                 for g in hits_i:
                     watchlist_hits.append((int(i), int(p), int(g)))
 
-    mean_or_zero = lambda xs: (sum(xs) / len(xs)) if xs else 0.0       # noqa: E731
+    mean_or_zero = lambda xs: (sum(xs) / len(xs)) if xs else 0.0  # noqa: E731
     components: dict[str, Any] = {
         "safety_monitor_eta": float(effective_lr),
         "safety_monitor_alarm_count": int(alarm_positions),

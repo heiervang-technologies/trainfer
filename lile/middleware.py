@@ -8,6 +8,7 @@ it through every call.
 
 See issue #12 for the design note.
 """
+
 from __future__ import annotations
 
 import contextvars
@@ -22,7 +23,8 @@ from starlette.types import ASGIApp
 
 
 _REQUEST_ID_CTX: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
-    "lile_request_id", default=None,
+    "lile_request_id",
+    default=None,
 )
 
 REQUEST_ID_HEADER = "X-Request-ID"

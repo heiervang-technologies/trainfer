@@ -10,6 +10,7 @@ Razin-safe (see lile/GLOSSARY.md): pure likelihood-up, no paired margin.
 
 Sample shape: ``{"text": str}``.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -24,8 +25,13 @@ from ._utils import (
 )
 
 
-def ntp_loss(model: Any, tokenizer: Any, samples: list[dict[str, Any]],
-             max_len: int = 2048, **_: Any) -> dict[str, Any]:
+def ntp_loss(
+    model: Any,
+    tokenizer: Any,
+    samples: list[dict[str, Any]],
+    max_len: int = 2048,
+    **_: Any,
+) -> dict[str, Any]:
     if not samples:
         raise ValueError("ntp_loss requires at least one sample")
 
@@ -34,20 +40,27 @@ def ntp_loss(model: Any, tokenizer: Any, samples: list[dict[str, Any]],
         text = s.get("text")
         if not text:
             raise ValueError("ntp sample missing 'text'")
-        ids = _to_int_list(tokenizer(text=text, add_special_tokens=True).input_ids)[:max_len]
+        ids = _to_int_list(tokenizer(text=text, add_special_tokens=True).input_ids)[
+            :max_len
+        ]
         t = torch.tensor(ids, dtype=torch.long)
-        tokenized.append({
-            "input_ids": t,
-            "labels": t.clone(),
-            "attention_mask": torch.ones(len(ids), dtype=torch.long),
-        })
+        tokenized.append(
+            {
+                "input_ids": t,
+                "labels": t.clone(),
+                "attention_mask": torch.ones(len(ids), dtype=torch.long),
+            }
+        )
 
     pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id or 0
     batch = pad_and_stack(tokenized, pad_id=pad_id)
-    summed = sequence_logprob(model, batch["input_ids"], batch["labels"],
-                              batch["attention_mask"])
+    summed = sequence_logprob(
+        model, batch["input_ids"], batch["labels"], batch["attention_mask"]
+    )
     shifted_labels = batch["labels"][:, 1:]
-    n_tokens = (shifted_labels != -100).sum(dim=-1).clamp_min(1).float().to(summed.device)
+    n_tokens = (
+        (shifted_labels != -100).sum(dim=-1).clamp_min(1).float().to(summed.device)
+    )
     nll = -(summed / n_tokens).mean()
     positions, target_ids = extract_target_positions(batch["labels"])
     return {

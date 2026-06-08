@@ -7,6 +7,7 @@ that the on-disk format round-trips faithfully.
 
 Run with: python -m lile.tests.test_trajectory_snapshot
 """
+
 from __future__ import annotations
 
 import json
@@ -31,10 +32,14 @@ def _make_fake_state() -> ModelState:
     state.model = MagicMock()
     # Make model.named_parameters iterable returning (name, param) pairs.
     fake_params: list[tuple[str, torch.nn.Parameter]] = [
-        ("base.0.self_attn.q_proj.lora_A.default.weight",
-         torch.nn.Parameter(torch.randn(4, 8))),
-        ("base.0.self_attn.q_proj.lora_B.default.weight",
-         torch.nn.Parameter(torch.randn(8, 4))),
+        (
+            "base.0.self_attn.q_proj.lora_A.default.weight",
+            torch.nn.Parameter(torch.randn(4, 8)),
+        ),
+        (
+            "base.0.self_attn.q_proj.lora_B.default.weight",
+            torch.nn.Parameter(torch.randn(8, 4)),
+        ),
     ]
     state.model.named_parameters = lambda: iter(fake_params)
     state.tokenizer = MagicMock()

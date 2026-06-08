@@ -11,6 +11,7 @@ by prompt-hash, so the prompt string itself is the cache key — keep the
 prompts byte-stable across edits if you want grades to remain comparable
 across runs.
 """
+
 from __future__ import annotations
 
 import json

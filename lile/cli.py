@@ -4,6 +4,7 @@ Lives outside ``lile.server`` so it can be imported (and tested) without
 pulling in uvicorn / transformers / torch — keeping the cpu_only / torchless
 test runner happy.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -22,12 +23,18 @@ def parse_cli_args(argv: list[str] | None = None) -> ServeConfig:
     p.add_argument("--data-dir", type=pathlib.Path, default=cfg.data_dir)
     p.add_argument("--max-seq-length", type=int, default=cfg.max_seq_length)
     p.add_argument("--lora-rank", type=int, default=cfg.lora_rank)
-    p.add_argument("--no-4bit", dest="load_in_4bit", action="store_false",
-                   default=cfg.load_in_4bit)
-    p.add_argument("--idle-replay", dest="idle_replay", action="store_true",
-                   default=cfg.idle_replay)
-    p.add_argument("--frozen-ref", dest="frozen_ref", action="store_true",
-                   default=cfg.frozen_ref)
+    p.add_argument(
+        "--no-4bit", dest="load_in_4bit", action="store_false", default=cfg.load_in_4bit
+    )
+    p.add_argument(
+        "--idle-replay",
+        dest="idle_replay",
+        action="store_true",
+        default=cfg.idle_replay,
+    )
+    p.add_argument(
+        "--frozen-ref", dest="frozen_ref", action="store_true", default=cfg.frozen_ref
+    )
     args = p.parse_args(argv)
     cfg.host = args.host
     cfg.port = args.port

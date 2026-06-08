@@ -35,6 +35,7 @@ Scope (what this is NOT):
     so each record can be replayed up to the cap again. Acceptable for v0;
     the trajectory log itself is the durable record.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -53,11 +54,11 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class ReplayPolicy:
-    idle_threshold_s: float = 30.0     # queue must be empty for this long
-    poll_interval_s: float = 2.0       # how often to check idleness
-    max_replays_per_record: int = 3    # per-record lifetime cap (this process)
+    idle_threshold_s: float = 30.0  # queue must be empty for this long
+    poll_interval_s: float = 2.0  # how often to check idleness
+    max_replays_per_record: int = 3  # per-record lifetime cap (this process)
     recency_half_life_h: float = 24.0  # weight halves every N hours of age
-    min_feedback_records: int = 3      # don't replay if corpus too small
+    min_feedback_records: int = 3  # don't replay if corpus too small
 
     @classmethod
     def from_config(cls, cfg: Any) -> "ReplayPolicy":
@@ -104,7 +105,9 @@ class IdleReplayScheduler:
         self._stop.set()
         if self._task is not None:
             try:
-                await asyncio.wait_for(self._task, timeout=self.policy.poll_interval_s * 2 + 1)
+                await asyncio.wait_for(
+                    self._task, timeout=self.policy.poll_interval_s * 2 + 1
+                )
             except asyncio.TimeoutError:
                 self._task.cancel()
             self._task = None
@@ -115,7 +118,8 @@ class IdleReplayScheduler:
             while not self._stop.is_set():
                 try:
                     await asyncio.wait_for(
-                        self._stop.wait(), timeout=self.policy.poll_interval_s,
+                        self._stop.wait(),
+                        timeout=self.policy.poll_interval_s,
                     )
                     # stop was set while we were sleeping.
                     return
@@ -161,8 +165,11 @@ class IdleReplayScheduler:
             self._replayed[offset] = self._replayed.get(offset, 0) + 1
             self.stats["replays_enqueued"] += 1
             self.stats["last_replay_offset"] = offset
-            log.debug("replayed feedback at offset=%d (count=%d)",
-                      offset, self._replayed[offset])
+            log.debug(
+                "replayed feedback at offset=%d (count=%d)",
+                offset,
+                self._replayed[offset],
+            )
         except Exception:
             log.exception("replay submit failed for offset=%d", offset)
 

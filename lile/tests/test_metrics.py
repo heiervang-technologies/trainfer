@@ -13,6 +13,7 @@ Covers `lile/metrics.py`:
 
 Run with: pytest lile/tests/test_metrics.py
 """
+
 from __future__ import annotations
 
 
@@ -102,24 +103,31 @@ def test_render_prometheus_returns_bytes_with_text_format_header():
 def test_record_request_increments_counter():
     from lile import metrics
 
-    before = _counter_value(metrics.render_prometheus(),
-                            "lile_requests_total",
-                            {"route": "/v1/train", "status": "200"})
+    before = _counter_value(
+        metrics.render_prometheus(),
+        "lile_requests_total",
+        {"route": "/v1/train", "status": "200"},
+    )
     metrics.record_request(route="/v1/train", status=200)
-    after = _counter_value(metrics.render_prometheus(),
-                           "lile_requests_total",
-                           {"route": "/v1/train", "status": "200"})
+    after = _counter_value(
+        metrics.render_prometheus(),
+        "lile_requests_total",
+        {"route": "/v1/train", "status": "200"},
+    )
     assert after == before + 1.0
 
 
 def test_record_train_step_increments_counter_and_histogram():
     from lile import metrics
 
-    before = _counter_value(metrics.render_prometheus(),
-                            "lile_train_steps_total", {"objective": "sft"})
+    before = _counter_value(
+        metrics.render_prometheus(), "lile_train_steps_total", {"objective": "sft"}
+    )
     metrics.record_train_step(objective="sft", latency_s=0.123, loss=1.5)
     text = metrics.render_prometheus().decode("utf-8")
-    after = _counter_value(text.encode(), "lile_train_steps_total", {"objective": "sft"})
+    after = _counter_value(
+        text.encode(), "lile_train_steps_total", {"objective": "sft"}
+    )
     assert after == before + 1.0
     # Histogram count bumped.
     assert "lile_step_latency_seconds_count" in text
@@ -128,11 +136,13 @@ def test_record_train_step_increments_counter_and_histogram():
 def test_record_feedback_event_counter():
     from lile import metrics
 
-    before = _counter_value(metrics.render_prometheus(),
-                            "lile_feedback_events_total", {"kind": "binary"})
+    before = _counter_value(
+        metrics.render_prometheus(), "lile_feedback_events_total", {"kind": "binary"}
+    )
     metrics.record_feedback_event(kind="binary")
-    after = _counter_value(metrics.render_prometheus(),
-                           "lile_feedback_events_total", {"kind": "binary"})
+    after = _counter_value(
+        metrics.render_prometheus(), "lile_feedback_events_total", {"kind": "binary"}
+    )
     assert after == before + 1.0
 
 
@@ -218,8 +228,10 @@ def test_metrics_route_emits_prom_text_format():
 
     @app.get("/metrics")
     async def _metrics():  # pragma: no cover — handler body checked via client
-        return Response(metrics.render_prometheus(),
-                        media_type="text/plain; version=0.0.4; charset=utf-8")
+        return Response(
+            metrics.render_prometheus(),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
     with TestClient(app) as client:
         r = client.get("/metrics")
@@ -235,9 +247,7 @@ def test_openmetrics_negotiation_returns_exemplar_content_type():
     into exemplars. Plain-text callers keep the legacy content-type."""
     from lile import metrics
 
-    plain_body, plain_ct = metrics.render_negotiated(
-        "text/plain; version=0.0.4"
-    )
+    plain_body, plain_ct = metrics.render_negotiated("text/plain; version=0.0.4")
     assert plain_ct.startswith("text/plain")
     assert b"# HELP lile_requests_total" in plain_body
 
@@ -262,7 +272,7 @@ def test_exemplar_attached_when_request_id_bound():
         _REQUEST_ID_CTX.reset(token)
 
     body = metrics.render_openmetrics().decode("utf-8")
-    assert "request_id=\"req_cafebabecafebabe\"" in body
+    assert 'request_id="req_cafebabecafebabe"' in body
 
 
 def test_unmatched_route_collapses_to_single_label():
@@ -304,12 +314,18 @@ def test_metrics_route_wired_in_server():
 
 def _counter_value(rendered: bytes, name: str, labels: dict[str, str]) -> float:
     """Parse a single counter sample out of the rendered text format."""
-    text = rendered.decode("utf-8") if isinstance(rendered, (bytes, bytearray)) else rendered
+    text = (
+        rendered.decode("utf-8")
+        if isinstance(rendered, (bytes, bytearray))
+        else rendered
+    )
     # prometheus_client emits both `<name>` (current) and `<name>_total` for
     # counters, depending on version. Accept either.
     return max(
         _sample_value(text, name, labels),
-        _sample_value(text, name + "_created" if name.endswith("_total") else name, labels),
+        _sample_value(
+            text, name + "_created" if name.endswith("_total") else name, labels
+        ),
         _sample_value(text, name[:-6] if name.endswith("_total") else name, labels),
     )
 

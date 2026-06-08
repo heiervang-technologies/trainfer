@@ -1,6 +1,7 @@
 """FastAPI server — OpenAI-compatible chat completions plus /v1/train,
 /v1/feedback, and /v1/state/* control-plane routes.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -125,6 +126,7 @@ class ObjectiveSpec(BaseModel):
     ``samples`` and ``kwargs`` default to the spec-level fields when None,
     so callers can either share data across primaries or route per-rollout.
     """
+
     name: str
     weight: float = 1.0
     samples: list[dict[str, Any]] | None = None
@@ -159,6 +161,7 @@ class MemorizeRequest(BaseModel):
     Drives the greedy-memorize loop in ``lile.memorize``. Threshold is the
     argmax-match fraction at which training stops; max_steps caps the loop.
     """
+
     prompt: str
     response: str
     max_steps: int = 30
@@ -177,6 +180,7 @@ class EvalGreedyRankRequest(BaseModel):
     (R-001..R-004) to probe retention on previously memorized facts without
     triggering a training step.
     """
+
     prompt: str
     response: str
 
@@ -202,13 +206,16 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
                     await app.state.controller.request_snapshot_load(name)
                     log.info("autoload_on_boot — restored %r", name)
             except Exception:
-                log.exception("autoload_on_boot — load %r failed; continuing cold", name)
+                log.exception(
+                    "autoload_on_boot — load %r failed; continuing cold", name
+                )
 
         # Hot reload: patches function bodies in place on file save.
         # Gated on cfg.dev_autoreload (or LILE_DEV_AUTORELOAD=1). Safe to
         # call without jurigged installed — logs a warning and proceeds.
         if cfg.dev_autoreload or os.environ.get("LILE_DEV_AUTORELOAD") == "1":
             from .dev.autoreload import enable as _enable_autoreload
+
             _enable_autoreload()
 
         try:
@@ -285,6 +292,7 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
         messages = [m.model_dump() for m in req.messages]
 
         if req.stream:
+
             async def sse():
                 ttft_observed = False
                 try:
@@ -303,7 +311,9 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
                             payload = {
                                 "object": "chat.completion.chunk",
                                 "model": cfg.model,
-                                "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
+                                "choices": [
+                                    {"index": 0, "delta": {}, "finish_reason": "error"}
+                                ],
                                 "lile": {
                                     "error": {
                                         "code": "internal",
@@ -322,10 +332,14 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
                                 "id": ev["response_id"],
                                 "object": "chat.completion.chunk",
                                 "model": cfg.model,
-                                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                                "lile": {"latency_s": time.time() - t0,
-                                         "commit_cursor": ev["commit_cursor"],
-                                         "response_id": ev["response_id"]},
+                                "choices": [
+                                    {"index": 0, "delta": {}, "finish_reason": "stop"}
+                                ],
+                                "lile": {
+                                    "latency_s": time.time() - t0,
+                                    "commit_cursor": ev["commit_cursor"],
+                                    "response_id": ev["response_id"],
+                                },
                             }
                             yield f"data: {json.dumps(payload)}\n\n"
                             # OpenAI-spec final `usage` chunk (choices=[], usage
@@ -374,7 +388,8 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
                             continue
                         if not ttft_observed:
                             metrics_mod.record_generate_latency(
-                                stream=True, latency_s=time.time() - t0,
+                                stream=True,
+                                latency_s=time.time() - t0,
                             )
                             ttft_observed = True
                         payload = {
@@ -389,7 +404,9 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
                     rid = current_request_id() or ""
                     err_payload = {
                         "object": "chat.completion.chunk",
-                        "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
+                        "choices": [
+                            {"index": 0, "delta": {}, "finish_reason": "error"}
+                        ],
                         "lile": {
                             "error": {
                                 "code": "internal",
@@ -417,22 +434,25 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
         )
         latency = time.time() - t0
         metrics_mod.record_generate_latency(stream=False, latency_s=latency)
-        message: dict[str, Any] = {"role": "assistant",
-                                   "content": result["response"]}
+        message: dict[str, Any] = {"role": "assistant", "content": result["response"]}
         if result.get("reasoning_content"):
             message["reasoning_content"] = result["reasoning_content"]
         return {
             "id": result["response_id"],
             "object": "chat.completion",
             "model": cfg.model,
-            "choices": [{
-                "index": 0,
-                "finish_reason": "stop",
-                "message": message,
-            }],
-            "lile": {"latency_s": latency,
-                     "commit_cursor": c.queue.committed,
-                     "response_id": result["response_id"]},
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": message,
+                }
+            ],
+            "lile": {
+                "latency_s": latency,
+                "commit_cursor": c.queue.committed,
+                "response_id": result["response_id"],
+            },
         }
 
     # --------------------------------------------------------------- train
@@ -446,6 +466,7 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
     @app.post("/v1/train/memorize")
     async def train_memorize(req: MemorizeRequest) -> dict[str, Any]:
         from .memorize import iterate_memorize
+
         c: Controller = app.state.controller
         return await iterate_memorize(
             c,
@@ -490,8 +511,7 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
         return {"snapshots": app.state.controller.snapshots.list()}
 
     @app.get("/v1/state/trajectory/tail")
-    async def traj_tail(n: int = 20,
-                        since_offset: int | None = None) -> dict[str, Any]:
+    async def traj_tail(n: int = 20, since_offset: int | None = None) -> dict[str, Any]:
         traj = app.state.controller.trajectory
         if since_offset is None:
             return {"events": traj.tail(n)}
@@ -512,7 +532,8 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
             # callers can tell the feature is off but the route itself is
             # stable.
             async def _disabled():
-                yield "event: shutdown\ndata: {\"reason\":\"disabled\"}\n\n"
+                yield 'event: shutdown\ndata: {"reason":"disabled"}\n\n'
+
             return StreamingResponse(_disabled(), media_type="text/event-stream")
 
         sub = c.commits.subscribe()
@@ -523,7 +544,8 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
                 while True:
                     try:
                         event = await asyncio.wait_for(
-                            sub.get(), timeout=keepalive_interval,
+                            sub.get(),
+                            timeout=keepalive_interval,
                         )
                     except asyncio.TimeoutError:
                         yield ": keepalive\n\n"
@@ -562,4 +584,5 @@ def serve(cfg: ServeConfig | None = None) -> None:
 
 if __name__ == "__main__":
     from .cli import parse_cli_args
+
     serve(parse_cli_args())

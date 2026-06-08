@@ -17,6 +17,7 @@ Covers:
 Run with: pytest -xvs lile/tests/test_reasoning.py
      or: python -m lile.tests.test_reasoning
 """
+
 from __future__ import annotations
 
 import sys
@@ -129,7 +130,10 @@ def test_extract_final_r1_no_tags():
 # --------------------------------------------------------------- registry
 def test_registry_hits():
     assert get_parser_for_model("unsloth/Qwen3.5-9B").start_in_prompt is True
-    assert get_parser_for_model("unsloth/qwen3-0.6b-unsloth-bnb-4bit").start_in_prompt is True
+    assert (
+        get_parser_for_model("unsloth/qwen3-0.6b-unsloth-bnb-4bit").start_in_prompt
+        is True
+    )
     assert get_parser_for_model("deepseek-ai/DeepSeek-R1").start_in_prompt is False
     assert get_parser_for_model("mistral/Magistral-Small").start_in_prompt is False
 

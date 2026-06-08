@@ -9,6 +9,7 @@ fresh state against the restored weights.
 
 See `lile/docs/research/optimizer-sample-efficiency.md` §1 concern #3.
 """
+
 from __future__ import annotations
 
 import sys
@@ -42,8 +43,9 @@ def test_handle_task_snapshot_load_resets_optimizer():
     controller.train_engine = TrainEngine.__new__(TrainEngine)
     controller.train_engine._opts = {"": MagicMock()}  # live optimizer
 
-    task = SimpleNamespace(kind="snapshot_load", payload={"name": "test_snap"},
-                           token=1, batch_id="b1")
+    task = SimpleNamespace(
+        kind="snapshot_load", payload={"name": "test_snap"}, token=1, batch_id="b1"
+    )
     result = controller._handle_task(task)
 
     assert result["loaded"] == "test_snap"
@@ -66,8 +68,9 @@ def test_handle_task_snapshot_save_does_not_reset_optimizer():
     sentinel_opt = MagicMock()
     controller.train_engine._opts = {"": sentinel_opt}
 
-    task = SimpleNamespace(kind="snapshot_save", payload={"name": "save_only"},
-                           token=2, batch_id="b2")
+    task = SimpleNamespace(
+        kind="snapshot_save", payload={"name": "save_only"}, token=2, batch_id="b2"
+    )
     controller._handle_task(task)
 
     assert controller.train_engine._opts.get("") is sentinel_opt, (

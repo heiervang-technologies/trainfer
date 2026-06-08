@@ -8,6 +8,7 @@ step lands.
 Uses fake objectives + a one-parameter torch.nn.Module so the test stays
 torchless-import-safe-ish (still imports torch, but no GPU / no transformers).
 """
+
 from __future__ import annotations
 
 import threading
@@ -55,6 +56,7 @@ def _fake_state(model: _FakeModel) -> SimpleNamespace:
 
 class _LockCtx:
     """ModelState.mode_lock is used via ``with`` — supply a no-op CM."""
+
     def __enter__(self):
         return self
 
@@ -71,8 +73,9 @@ def two_fake_objectives():
     L_a(x) = x², L_b(x) = (x − 0.5)² — both differentiable, both produce
     nonzero grads at x=1.0.
     """
+
     def la(model, tokenizer, samples, **_):  # noqa: ARG001
-        loss = model.x ** 2
+        loss = model.x**2
         return {"loss": loss, "components": {"sub": float(loss.detach())}}
 
     def lb(model, tokenizer, samples, **_):  # noqa: ARG001
@@ -90,6 +93,7 @@ def two_fake_objectives():
 def gated_objective():
     """Objective that returns loss=None — exercises the precondition-gated
     skip path (e.g. unlike's tier preconditions firing)."""
+
     def gated(model, tokenizer, samples, **_):  # noqa: ARG001
         return {"loss": None, "components": {"reason": "fake_gate_closed"}}
 
@@ -102,13 +106,17 @@ def gated_objective():
 def test_combined_loss_equals_weighted_sum(two_fake_objectives) -> None:
     a, b = two_fake_objectives
     model = _FakeModel()
-    eng = TrainEngine(_fake_state(model), lr=0.0, per_objective=True)  # lr=0 so weights don't move
-    res = eng.step({
-        "objectives": [
-            {"name": a, "weight": 2.0},
-            {"name": b, "weight": 3.0},
-        ],
-    })
+    eng = TrainEngine(
+        _fake_state(model), lr=0.0, per_objective=True
+    )  # lr=0 so weights don't move
+    res = eng.step(
+        {
+            "objectives": [
+                {"name": a, "weight": 2.0},
+                {"name": b, "weight": 3.0},
+            ],
+        }
+    )
     # L = 2·x² + 3·(x−0.5)² at x=1.0 → 2·1 + 3·0.25 = 2.75
     assert res["skipped"] is False
     assert res["loss"] == pytest.approx(2.75, rel=1e-6)
@@ -125,12 +133,14 @@ def test_components_namespaced_per_objective(two_fake_objectives) -> None:
     a, b = two_fake_objectives
     model = _FakeModel()
     eng = TrainEngine(_fake_state(model), lr=0.0, per_objective=True)
-    res = eng.step({
-        "objectives": [
-            {"name": a, "weight": 1.0},
-            {"name": b, "weight": 1.0},
-        ],
-    })
+    res = eng.step(
+        {
+            "objectives": [
+                {"name": a, "weight": 1.0},
+                {"name": b, "weight": 1.0},
+            ],
+        }
+    )
     c = res["components"]
     # Each fake's "sub" key is namespaced — no collision.
     assert "fake_a.sub" in c
@@ -147,12 +157,14 @@ def test_gradient_is_linear_combination(two_fake_objectives) -> None:
     model = _FakeModel()
     eng = TrainEngine(_fake_state(model), lr=0.1, grad_clip=0.0, per_objective=True)
     x_before = float(model.x.detach())
-    eng.step({
-        "objectives": [
-            {"name": a, "weight": 2.0},
-            {"name": b, "weight": 3.0},
-        ],
-    })
+    eng.step(
+        {
+            "objectives": [
+                {"name": a, "weight": 2.0},
+                {"name": b, "weight": 3.0},
+            ],
+        }
+    )
     x_after = float(model.x.detach())
     # AdamW on first step ≈ lr·sign(grad) (warmup of moments). Check sign + magnitude bound.
     assert x_after < x_before  # grad positive → x decreases
@@ -164,18 +176,22 @@ def test_skipped_when_all_primaries_gated(gated_objective) -> None:
     g = gated_objective
     model = _FakeModel()
     eng = TrainEngine(_fake_state(model), lr=0.0, per_objective=True)
-    res = eng.step({
-        "objectives": [
-            {"name": g, "weight": 1.0},
-            {"name": g, "weight": 0.5},
-        ],
-    })
+    res = eng.step(
+        {
+            "objectives": [
+                {"name": g, "weight": 1.0},
+                {"name": g, "weight": 0.5},
+            ],
+        }
+    )
     assert res["skipped"] is True
     assert res["loss"] is None
     assert res["components"]["skipped_reason"] == "all_primaries_skipped"
 
 
-def test_partial_skip_keeps_active_primaries(two_fake_objectives, gated_objective) -> None:
+def test_partial_skip_keeps_active_primaries(
+    two_fake_objectives, gated_objective
+) -> None:
     """One primary fires, one is gated — combined loss should equal the
     weighted active primary alone, and skipped_total should reflect the
     gated entry."""
@@ -183,12 +199,14 @@ def test_partial_skip_keeps_active_primaries(two_fake_objectives, gated_objectiv
     g = gated_objective
     model = _FakeModel()
     eng = TrainEngine(_fake_state(model), lr=0.0, per_objective=True)
-    res = eng.step({
-        "objectives": [
-            {"name": a, "weight": 4.0},
-            {"name": g, "weight": 1.0},
-        ],
-    })
+    res = eng.step(
+        {
+            "objectives": [
+                {"name": a, "weight": 4.0},
+                {"name": g, "weight": 1.0},
+            ],
+        }
+    )
     assert res["skipped"] is False
     # 4·x² at x=1.0 = 4.0; the gated entry contributes nothing.
     assert res["loss"] == pytest.approx(4.0, rel=1e-6)
@@ -206,24 +224,26 @@ def test_per_entry_samples_override_default(two_fake_objectives) -> None:
 
     def la(model, tokenizer, samples, **_):
         seen["a"] = list(samples)
-        return {"loss": model.x ** 2, "components": {}}
+        return {"loss": model.x**2, "components": {}}
 
     def lb(model, tokenizer, samples, **_):
         seen["b"] = list(samples)
-        return {"loss": model.x ** 2, "components": {}}
+        return {"loss": model.x**2, "components": {}}
 
     OBJECTIVES["fake_a"] = la
     OBJECTIVES["fake_b"] = lb
     try:
         model = _FakeModel()
         eng = TrainEngine(_fake_state(model), lr=0.0, per_objective=True)
-        eng.step({
-            "samples": [{"shared": True}],
-            "objectives": [
-                {"name": a, "samples": [{"only_a": True}]},
-                {"name": b},  # falls back to top-level "samples"
-            ],
-        })
+        eng.step(
+            {
+                "samples": [{"shared": True}],
+                "objectives": [
+                    {"name": a, "samples": [{"only_a": True}]},
+                    {"name": b},  # falls back to top-level "samples"
+                ],
+            }
+        )
     finally:
         OBJECTIVES.pop("fake_a", None)
         OBJECTIVES.pop("fake_b", None)

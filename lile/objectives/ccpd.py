@@ -15,6 +15,7 @@ NOTE on pi_old vs pi_theta: both are the same weights at feedback-receipt
 time; pi_old is a no-grad forward path on the current model. We do NOT keep
 a separate CPU/GPU copy — the difference is the torch.no_grad() context.
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,8 +31,14 @@ log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------- scoring
 @torch.no_grad()
-def score_rc(model: Any, tokenizer: Any, prompt: str, response: str,
-             critique: str, beta: float = 0.1) -> float:
+def score_rc(
+    model: Any,
+    tokenizer: Any,
+    prompt: str,
+    response: str,
+    critique: str,
+    beta: float = 0.1,
+) -> float:
     """Length-normalized r_c = β · [log π(y|x,c) - log π(y|x)] / |y|.
 
     Implemented as two forward passes on the same model with differing context.
@@ -43,10 +50,12 @@ def score_rc(model: Any, tokenizer: Any, prompt: str, response: str,
     pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id or 0
     wb = pad_and_stack([with_c_tok], pad_id=pad_id)
     nb = pad_and_stack([no_c_tok], pad_id=pad_id)
-    lp_with = sequence_logprob_mean(model, wb["input_ids"], wb["labels"],
-                                    wb["attention_mask"])
-    lp_without = sequence_logprob_mean(model, nb["input_ids"], nb["labels"],
-                                       nb["attention_mask"])
+    lp_with = sequence_logprob_mean(
+        model, wb["input_ids"], wb["labels"], wb["attention_mask"]
+    )
+    lp_without = sequence_logprob_mean(
+        model, nb["input_ids"], nb["labels"], nb["attention_mask"]
+    )
     return float(beta * (lp_with.item() - lp_without.item()))
 
 
@@ -61,10 +70,16 @@ def rank_advantages(scores: list[float]) -> torch.Tensor:
 
 # ---------------------------------------------------------------------- loss
 def ccpd_v2_loss(
-    model: Any, tokenizer: Any, samples: list[dict[str, Any]],
-    pi_ref: Any | None = None, beta: float = 0.1,
-    alpha: float = 0.3, gamma: float = 0.05, tau: float = 0.5,
-    distill_top_m: int = 2, k_aux: int = 4,
+    model: Any,
+    tokenizer: Any,
+    samples: list[dict[str, Any]],
+    pi_ref: Any | None = None,
+    beta: float = 0.1,
+    alpha: float = 0.3,
+    gamma: float = 0.05,
+    tau: float = 0.5,
+    distill_top_m: int = 2,
+    k_aux: int = 4,
     max_new_tokens: int = 256,
     pi_ref_mode: str | None = "adapter_disabled",
     **_: Any,
@@ -96,15 +111,22 @@ def ccpd_v2_loss(
     need = max(0, k_aux - len(candidates))
     if need > 0:
         with torch.no_grad():
-            candidates.extend(_sample_candidates(
-                model, tokenizer, prompt, critique=critique,
-                n=need, max_new_tokens=max_new_tokens,
-            ))
+            candidates.extend(
+                _sample_candidates(
+                    model,
+                    tokenizer,
+                    prompt,
+                    critique=critique,
+                    n=need,
+                    max_new_tokens=max_new_tokens,
+                )
+            )
         # C-2: _sample_candidates flips to for_inference() internally;
         # restore training mode so the REINFORCE + distill forwards that
         # follow compute gradients correctly.
         try:
             from unsloth import FastLanguageModel
+
             FastLanguageModel.for_training(model)
         except Exception:
             pass
@@ -117,15 +139,19 @@ def ccpd_v2_loss(
             candidates.append(bad)
 
     if len(candidates) < 2:
-        raise ValueError("ccpd_v2_loss needs at least 2 candidates (aux + bad or "
-                         "user_preferred + bad)")
+        raise ValueError(
+            "ccpd_v2_loss needs at least 2 candidates (aux + bad or "
+            "user_preferred + bad)"
+        )
 
     # --- Step 2+3: detached scoring and rank advantages ---------------------
     scores: list[float] = []
     if critique:
         with torch.no_grad():
             for y in candidates:
-                scores.append(score_rc(model, tokenizer, prompt, y, critique, beta=beta))
+                scores.append(
+                    score_rc(model, tokenizer, prompt, y, critique, beta=beta)
+                )
     else:
         # `preferred`-only path — score by plain log-prob under pi_old, but
         # explicitly set user_preferred to +inf and bad to -inf to pin the ends.
@@ -135,8 +161,9 @@ def ccpd_v2_loss(
                     [build_chat_inputs(tokenizer, prompt, y)],
                     pad_id=tokenizer.pad_token_id or tokenizer.eos_token_id or 0,
                 )
-                lp = sequence_logprob_mean(model, nb["input_ids"], nb["labels"],
-                                           nb["attention_mask"])
+                lp = sequence_logprob_mean(
+                    model, nb["input_ids"], nb["labels"], nb["attention_mask"]
+                )
                 scores.append(float(lp.item()))
         # Pin ends.
         if user_preferred:
@@ -163,14 +190,17 @@ def ccpd_v2_loss(
     pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id or 0
     batch = pad_and_stack(toks, pad_id=pad_id)
     lp_stack = sequence_logprob_mean(
-        model, batch["input_ids"], batch["labels"], batch["attention_mask"],
-    )                                                            # (k,)
-    A = advantages.to(lp_stack.device).detach()                  # (k,)
+        model,
+        batch["input_ids"],
+        batch["labels"],
+        batch["attention_mask"],
+    )  # (k,)
+    A = advantages.to(lp_stack.device).detach()  # (k,)
     L_policy = -(A * lp_stack).mean()
 
     # --- Step 4b: SFT on top-m ranked --------------------------------------
     top_idx = advantages.argsort(descending=True)[:distill_top_m].tolist()
-    distill_lps = lp_stack[top_idx]                              # mean log-prob per-token
+    distill_lps = lp_stack[top_idx]  # mean log-prob per-token
     L_distill = -distill_lps.mean()
 
     # --- Step 4c: KL anchor to pi_ref --------------------------------------
@@ -192,11 +222,20 @@ def ccpd_v2_loss(
     # still penalizing drift at the reaction-to-prompt layer, which empirically
     # stabilizes CCPD. Promoting this to full-generation KL is tracked as a
     # future refinement; see PR#8 review.
-    use_self_ref = (pi_ref is None and pi_ref_mode == "adapter_disabled"
-                    and gamma > 0.0 and hasattr(model, "disable_adapter"))
+    use_self_ref = (
+        pi_ref is None
+        and pi_ref_mode == "adapter_disabled"
+        and gamma > 0.0
+        and hasattr(model, "disable_adapter")
+    )
     if pi_ref is not None or use_self_ref:
-        tok = tokenizer(text=[prompt], return_tensors="pt", padding=True, truncation=True,
-                        max_length=512)
+        tok = tokenizer(
+            text=[prompt],
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=512,
+        )
         device = next(model.parameters()).device
         tok = {k: v.to(device) for k, v in tok.items()}
         logits = model(**tok).logits.float()
@@ -230,10 +269,15 @@ def ccpd_v2_loss(
 
 # ---------------------------------------------------------------------- sampling
 @torch.no_grad()
-def _sample_candidates(model: Any, tokenizer: Any, prompt: str,
-                       critique: str | None, n: int,
-                       max_new_tokens: int = 256,
-                       temperature: float = 0.9) -> list[str]:
+def _sample_candidates(
+    model: Any,
+    tokenizer: Any,
+    prompt: str,
+    critique: str | None,
+    n: int,
+    max_new_tokens: int = 256,
+    temperature: float = 0.9,
+) -> list[str]:
     """Auxiliary-sample n candidate refinements. Memory-neutral on serving KV.
 
     Unsloth's `fast_generate` reads per-layer temp_QA/temp_O buffers set up
@@ -246,16 +290,21 @@ def _sample_candidates(model: Any, tokenizer: Any, prompt: str,
     """
     try:
         from unsloth import FastLanguageModel
+
         FastLanguageModel.for_inference(model)
     except Exception:
         pass
 
     messages: list[dict[str, str]] = []
     if critique:
-        messages.append({"role": "system", "content": f"Feedback on prior attempt: {critique}"})
+        messages.append(
+            {"role": "system", "content": f"Feedback on prior attempt: {critique}"}
+        )
     messages.append({"role": "user", "content": prompt})
     prompt_text = tokenizer.apply_chat_template(
-        messages, add_generation_prompt=True, tokenize=False,
+        messages,
+        add_generation_prompt=True,
+        tokenize=False,
     )
     enc = tokenizer(text=prompt_text, return_tensors="pt", add_special_tokens=False)
     device = next(model.parameters()).device

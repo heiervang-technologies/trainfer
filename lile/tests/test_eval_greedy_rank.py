@@ -5,6 +5,7 @@ R-001 experiment runner against a live daemon — not here. These tests pin
 the schema, controller surface, and metrics counter so a rename or
 signature drift breaks CI immediately.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -28,6 +29,7 @@ def test_eval_request_schema_accepts_prompt_and_response():
 def test_controller_has_submit_eval_greedy_rank():
     """``Controller`` must expose the submit method with the right signature."""
     import inspect
+
     try:
         from lile.controller import Controller
     except ImportError:

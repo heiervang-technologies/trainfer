@@ -9,6 +9,7 @@ bounded ``asyncio.Queue`` instances — when a subscriber's consumer falls
 behind its queue fills, and further events drop silently (counted in
 ``drops``). Training throughput must never back-pressure on a slow client.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -49,8 +50,13 @@ class CommitBroadcaster:
 
     # -- fan-out ---------------------------------------------------------------
     def broadcast_commit(
-        self, *, cursor: int, objective: str, loss: float,
-        components: dict[str, Any], batch_size: int,
+        self,
+        *,
+        cursor: int,
+        objective: str,
+        loss: float,
+        components: dict[str, Any],
+        batch_size: int,
     ) -> None:
         """Fan-out a commit event. Must be called synchronously from the
         queue worker — ``put_nowait`` only *schedules* wakeups, so subscribers

@@ -84,6 +84,7 @@ The unlike primitive enforces four-tier preconditions at dispatch:
 The ``unlike`` samples carry ``prefix`` rather than ``prompt``;
 ``kl._sample_text`` accepts either, so the composition is drop-in.
 """
+
 from __future__ import annotations
 
 import warnings
@@ -128,8 +129,7 @@ def _check_preconditions(
     if batch_objectives is not None:
         pure = [s for s in samples if s.get("good_token_id") is None]
         if pure:
-            anchors = [bo for bo in batch_objectives
-                       if bo.get("name") == "kl_anchor"]
+            anchors = [bo for bo in batch_objectives if bo.get("name") == "kl_anchor"]
             if not anchors and not allow_unanchored:
                 raise ValueError(
                     "pure-unlike requires kl_anchor in batch_objectives "
@@ -144,7 +144,8 @@ def _check_preconditions(
                         f"'{scope}'; the anchor does not brake "
                         "target-position mass movement. Consider "
                         "scope='target_position' (see design-notes §9).",
-                        RuntimeWarning, stacklevel=2,
+                        RuntimeWarning,
+                        stacklevel=2,
                     )
                     continue
                 batch_exclude = set(bo.get("exclude_token_ids") or [])
@@ -156,7 +157,8 @@ def _check_preconditions(
                     # would also miss them. Check the same union the
                     # anchor actually applies.
                     sample_surgery = {
-                        s.get("bad_token_id"), s.get("good_token_id"),
+                        s.get("bad_token_id"),
+                        s.get("good_token_id"),
                     } - {None}
                     per_sample_derived = sample_surgery  # schema fallback
                     if not sample_surgery.issubset(
@@ -168,7 +170,8 @@ def _check_preconditions(
                             "tokens; the anchor fights the push-down at "
                             "the bad/good positions, producing a muddier "
                             "gradient.",
-                            RuntimeWarning, stacklevel=2,
+                            RuntimeWarning,
+                            stacklevel=2,
                         )
 
     if effective_lr is not None and effective_lr < _UNLIKE_LR_HEURISTIC_FLOOR:
@@ -176,15 +179,17 @@ def _check_preconditions(
             f"unlike dispatched with effective_lr={effective_lr:g} < 5e-5 "
             "(known-unsafe regime — the positive-teacher side can push "
             "p_bad UP; see unlike.py docstring and GLOSSARY). Override via "
-            "per_objective_lr={\"unlike\": 5e-5} or higher. This heuristic "
+            'per_objective_lr={"unlike": 5e-5} or higher. This heuristic '
             "floor will be replaced by Cleo's closed-form eta_min when "
             "task A lands.",
-            RuntimeWarning, stacklevel=2,
+            RuntimeWarning,
+            stacklevel=2,
         )
 
 
-def _should_trigger(rank_bad: int, p_bad: float,
-                    rank_below: int | None, prob_above: float | None) -> bool:
+def _should_trigger(
+    rank_bad: int, p_bad: float, rank_below: int | None, prob_above: float | None
+) -> bool:
     """Fire if *either* criterion is met. At least one must be provided.
 
     - rank_below: trigger when rank(bad_token) < rank_below (rank 0 = argmax).
@@ -207,7 +212,9 @@ def _prefix_ids(tokenizer: Any, prefix: str) -> list[int]:
         # actually see the context at generation time.
         raw = tokenizer.apply_chat_template(
             [{"role": "user", "content": prefix}],
-            add_generation_prompt=True, tokenize=True, return_tensors=None,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_tensors=None,
         )
         return _to_int_list(raw)
     return _to_int_list(tokenizer(text=prefix, add_special_tokens=False).input_ids)
@@ -227,15 +234,19 @@ def _pad_prefixes(tokenized: list[list[int]], pad_id: int) -> dict[str, torch.Te
     return {"input_ids": ids, "attention_mask": attn, "last_idx": last_idx}
 
 
-def unlike_loss(model: Any, tokenizer: Any, samples: list[dict[str, Any]],
-                positive_weight: float = 1.0,
-                default_rank_below: int | None = 20,
-                default_prob_above: float | None = 0.05,
-                eps: float = 1e-6,
-                allow_unanchored: bool = False,
-                batch_objectives: list[dict[str, Any]] | None = None,
-                effective_lr: float | None = None,
-                **_: Any) -> dict[str, Any]:
+def unlike_loss(
+    model: Any,
+    tokenizer: Any,
+    samples: list[dict[str, Any]],
+    positive_weight: float = 1.0,
+    default_rank_below: int | None = 20,
+    default_prob_above: float | None = 0.05,
+    eps: float = 1e-6,
+    allow_unanchored: bool = False,
+    batch_objectives: list[dict[str, Any]] | None = None,
+    effective_lr: float | None = None,
+    **_: Any,
+) -> dict[str, Any]:
     """Surgical unlikelihood loss.
 
     See module docstring for sample shape. ``default_rank_below`` and
@@ -252,7 +263,10 @@ def unlike_loss(model: Any, tokenizer: Any, samples: list[dict[str, Any]],
         raise ValueError("unlike_loss requires at least one sample")
 
     _check_preconditions(
-        samples, batch_objectives, allow_unanchored, effective_lr,
+        samples,
+        batch_objectives,
+        allow_unanchored,
+        effective_lr,
     )
 
     pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id or 0
@@ -265,23 +279,24 @@ def unlike_loss(model: Any, tokenizer: Any, samples: list[dict[str, Any]],
     last_idx = batch["last_idx"].to(device)
 
     out = model(input_ids=input_ids, attention_mask=attn, use_cache=False)
-    logits = out.logits                                                  # (B, T, V)
+    logits = out.logits  # (B, T, V)
     # Gather logits at the last real token position for each row.
     B, _T, V = logits.size()
     row_idx = torch.arange(B, device=device)
-    last_logits = logits[row_idx, last_idx]                              # (B, V)
+    last_logits = logits[row_idx, last_idx]  # (B, V)
     last_logits_f = last_logits.float()
-    log_probs = F.log_softmax(last_logits_f, dim=-1)                     # (B, V)
+    log_probs = F.log_softmax(last_logits_f, dim=-1)  # (B, V)
 
-    bad_ids = torch.tensor([int(s["bad_token_id"]) for s in samples],
-                           dtype=torch.long, device=device)              # (B,)
-    logp_bad = log_probs.gather(-1, bad_ids.unsqueeze(-1)).squeeze(-1)   # (B,)
+    bad_ids = torch.tensor(
+        [int(s["bad_token_id"]) for s in samples], dtype=torch.long, device=device
+    )  # (B,)
+    logp_bad = log_probs.gather(-1, bad_ids.unsqueeze(-1)).squeeze(-1)  # (B,)
     p_bad = logp_bad.exp()
 
     # Rank = number of tokens with *strictly greater* logit than the bad token.
     # Rank 0 means argmax; rank 4 means 5th-best.
     bad_logits = last_logits_f.gather(-1, bad_ids.unsqueeze(-1)).squeeze(-1)  # (B,)
-    rank_bad = (last_logits_f > bad_logits.unsqueeze(-1)).sum(dim=-1)         # (B,)
+    rank_bad = (last_logits_f > bad_logits.unsqueeze(-1)).sum(dim=-1)  # (B,)
 
     # Build per-sample trigger mask.
     trigger_mask = torch.zeros((B,), dtype=torch.bool, device=device)
@@ -291,29 +306,38 @@ def unlike_loss(model: Any, tokenizer: Any, samples: list[dict[str, Any]],
         trigger_mask[i] = _should_trigger(
             rank_bad=int(rank_bad[i].item()),
             p_bad=float(p_bad[i].item()),
-            rank_below=rk, prob_above=pk,
+            rank_below=rk,
+            prob_above=pk,
         )
 
     # Unlikelihood: -log(1 - p_bad), safe for p_bad close to 1.
     one_minus_p = (1.0 - p_bad).clamp_min(eps)
-    ul_per_sample = -torch.log(one_minus_p)                              # (B,)
+    ul_per_sample = -torch.log(one_minus_p)  # (B,)
 
     # Optional positive teacher: -log p(good) at the same position.
     has_good = [s.get("good_token_id") is not None for s in samples]
     if any(has_good):
         good_ids = torch.tensor(
-            [int(s["good_token_id"]) if s.get("good_token_id") is not None else 0
-             for s in samples], dtype=torch.long, device=device,
+            [
+                int(s["good_token_id"]) if s.get("good_token_id") is not None else 0
+                for s in samples
+            ],
+            dtype=torch.long,
+            device=device,
         )
-        logp_good_all = log_probs.gather(-1, good_ids.unsqueeze(-1)).squeeze(-1)   # (B,)
+        logp_good_all = log_probs.gather(-1, good_ids.unsqueeze(-1)).squeeze(-1)  # (B,)
         good_mask = torch.tensor(has_good, dtype=torch.bool, device=device)
-        sft_per_sample = torch.where(good_mask, -logp_good_all,
-                                     torch.zeros_like(logp_good_all))
+        sft_per_sample = torch.where(
+            good_mask, -logp_good_all, torch.zeros_like(logp_good_all)
+        )
     else:
         sft_per_sample = torch.zeros((B,), dtype=logp_bad.dtype, device=device)
 
-    weights = torch.tensor([float(s.get("weight", 1.0)) for s in samples],
-                           dtype=ul_per_sample.dtype, device=device)
+    weights = torch.tensor(
+        [float(s.get("weight", 1.0)) for s in samples],
+        dtype=ul_per_sample.dtype,
+        device=device,
+    )
     trigger_f = trigger_mask.float()
 
     # Unlikelihood term only fires on triggered positions. Positive teacher
@@ -324,11 +348,14 @@ def unlike_loss(model: Any, tokenizer: Any, samples: list[dict[str, Any]],
 
     with torch.no_grad():
         n_triggered = int(trigger_mask.sum().item())
-        ul_mean = float((ul_per_sample * trigger_f).sum().detach().cpu()
-                        / max(n_triggered, 1))
-        sft_mean = (float(sft_per_sample.sum().detach().cpu()
-                          / max(sum(has_good), 1))
-                    if any(has_good) else 0.0)
+        ul_mean = float(
+            (ul_per_sample * trigger_f).sum().detach().cpu() / max(n_triggered, 1)
+        )
+        sft_mean = (
+            float(sft_per_sample.sum().detach().cpu() / max(sum(has_good), 1))
+            if any(has_good)
+            else 0.0
+        )
         p_bad_mean = float(p_bad.mean().detach().cpu())
         rank_bad_mean = float(rank_bad.float().mean().detach().cpu())
 

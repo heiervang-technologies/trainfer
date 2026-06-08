@@ -6,6 +6,7 @@ and `error.retryable`, so the shape is load-bearing.
 
 Run with: pytest lile/tests/test_errors.py
 """
+
 from __future__ import annotations
 
 import pytest

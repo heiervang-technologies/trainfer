@@ -19,6 +19,7 @@ actually matches what's collectible on this runner. A file that declares
 cpu_only CI bucket — exactly the regression PR #36 shipped. The check
 raises at conftest load so the miss is loud, not a silent skip.
 """
+
 from __future__ import annotations
 
 import ast
@@ -35,21 +36,21 @@ collect_ignore_glob: list[str] = []
 # Files that can be imported on a torchless runner. Everything else in
 # ``lile/tests/`` will be skipped at collection time when torch is absent.
 _TORCHLESS_OK = {
-    "test_errors.py",               # lazy lile.errors import inside tests
-    "test_error_middleware.py",     # same; also uses FastAPI/TestClient
-    "test_eval_harness.py",         # harness smoke — urllib-only
-    "test_logging_backends.py",     # lile.logging_backends is lazy on heavy deps
-    "test_queue_cursor.py",         # lile.queue is pure Python
-    "test_queue_graceful_drain.py", # lile.queue drain path, asyncio-only
-    "test_reasoning.py",            # lile.reasoning is pure Python
-    "test_replay_streams.py",       # replay_streams scaffold — stdlib-only imports
-    "test_trajectory_tail.py",      # lile.trajectory is pure Python
-    "test_whitelist_consistency.py", # self-validation of _TORCHLESS_OK
-    "test_commits_sse_stream.py",   # lile.commit_stream is pure asyncio + FastAPI
-    "test_server_cli.py",           # argparse-only — no torch import
-    "test_rlvr_loop.py",            # lile.teach.rlvr_loop is torchless (urllib + stdlib)
-    "test_eval_arc_smoke.py",       # async CLI over stdlib HTTP; no torch import
-    "test_eval_greedy_rank.py",     # schema + metrics wiring only; no torch import
+    "test_errors.py",  # lazy lile.errors import inside tests
+    "test_error_middleware.py",  # same; also uses FastAPI/TestClient
+    "test_eval_harness.py",  # harness smoke — urllib-only
+    "test_logging_backends.py",  # lile.logging_backends is lazy on heavy deps
+    "test_queue_cursor.py",  # lile.queue is pure Python
+    "test_queue_graceful_drain.py",  # lile.queue drain path, asyncio-only
+    "test_reasoning.py",  # lile.reasoning is pure Python
+    "test_replay_streams.py",  # replay_streams scaffold — stdlib-only imports
+    "test_trajectory_tail.py",  # lile.trajectory is pure Python
+    "test_whitelist_consistency.py",  # self-validation of _TORCHLESS_OK
+    "test_commits_sse_stream.py",  # lile.commit_stream is pure asyncio + FastAPI
+    "test_server_cli.py",  # argparse-only — no torch import
+    "test_rlvr_loop.py",  # lile.teach.rlvr_loop is torchless (urllib + stdlib)
+    "test_eval_arc_smoke.py",  # async CLI over stdlib HTTP; no torch import
+    "test_eval_greedy_rank.py",  # schema + metrics wiring only; no torch import
     "conftest.py",
     "__init__.py",
 }
@@ -80,9 +81,7 @@ def _ast_has_cpu_only_pytestmark(tree: ast.AST) -> bool:
     return False
 
 
-def _cpu_only_whitelist_violations(
-    tests_dir: Path, whitelist: set[str]
-) -> list[str]:
+def _cpu_only_whitelist_violations(tests_dir: Path, whitelist: set[str]) -> list[str]:
     """Return test files that claim ``cpu_only`` but aren't whitelisted yet
     *and* import cleanly in the current (torchless) interpreter.
 

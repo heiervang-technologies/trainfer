@@ -6,6 +6,7 @@ assistant response is fed here so the model internalizes it without manual
 feedback. The loop body lives in a module-level function so jurigged can hot-
 patch it without a daemon bounce.
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,8 +21,9 @@ log = logging.getLogger(__name__)
 
 
 @torch.no_grad()
-def greedy_rank_fraction(model: Any, tokenizer: Any, prompt: str,
-                         response: str) -> tuple[float, int, int]:
+def greedy_rank_fraction(
+    model: Any, tokenizer: Any, prompt: str, response: str
+) -> tuple[float, int, int]:
     """Fraction of response tokens that are argmax under the current model.
 
     Returns ``(fraction, matched, total)``. A fraction of 1.0 means greedy
@@ -78,19 +80,23 @@ async def iterate_memorize(
     def _eval_under_lock() -> tuple[float, int, int]:
         with controller.state.mode_lock:
             return greedy_rank_fraction(
-                controller.state.model, controller.state.tokenizer,
-                prompt, response,
+                controller.state.model,
+                controller.state.tokenizer,
+                prompt,
+                response,
             )
 
     ev_loop = asyncio.get_running_loop()
     rank, matched, total = await ev_loop.run_in_executor(None, _eval_under_lock)
-    history.append({"step": 0, "rank": rank, "matched": matched, "total": total,
-                    "loss": None})
+    history.append(
+        {"step": 0, "rank": rank, "matched": matched, "total": total, "loss": None}
+    )
 
     commit_token: int | None = None
     if rank >= threshold:
-        log.info("memorize: already at %.3f (>= %.3f), skipping training",
-                 rank, threshold)
+        log.info(
+            "memorize: already at %.3f (>= %.3f), skipping training", rank, threshold
+        )
         return {
             "steps": 0,
             "final_rank": rank,
@@ -111,8 +117,7 @@ async def iterate_memorize(
     for step in range(1, max_steps + 1):
         spec: dict[str, Any] = {
             "objective": "weighted_sft",
-            "samples": [{"prompt": prompt, "response": response,
-                         "weight": weight}],
+            "samples": [{"prompt": prompt, "response": response, "weight": weight}],
             "chunk_size": 1,
         }
         if lr is not None:
@@ -126,8 +131,15 @@ async def iterate_memorize(
             log.warning("memorize: wait_for(%s) failed: %s", commit_token, exc)
 
         rank, matched, total = await ev_loop.run_in_executor(None, _eval_under_lock)
-        history.append({"step": step, "rank": rank, "matched": matched,
-                        "total": total, "commit_token": commit_token})
+        history.append(
+            {
+                "step": step,
+                "rank": rank,
+                "matched": matched,
+                "total": total,
+                "commit_token": commit_token,
+            }
+        )
 
         if rank >= threshold:
             return {

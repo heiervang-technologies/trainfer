@@ -12,6 +12,7 @@ For adversarial inputs (user-submitted code in prod), wrap this in a real
 sandbox (nsjail, firecracker). That wrapping is PR L's problem, not the
 registry's.
 """
+
 from __future__ import annotations
 
 import io
@@ -36,11 +37,35 @@ def _timeout_handler(signum, frame):  # pragma: no cover — signal path
 
 
 _SAFE_BUILTINS = {
-    name: __builtins__[name] if isinstance(__builtins__, dict) else getattr(__builtins__, name)
+    name: __builtins__[name]
+    if isinstance(__builtins__, dict)
+    else getattr(__builtins__, name)
     for name in (
-        "abs", "all", "any", "bool", "dict", "divmod", "enumerate", "filter",
-        "float", "int", "len", "list", "map", "max", "min", "print", "range",
-        "reversed", "round", "set", "sorted", "str", "sum", "tuple", "zip",
+        "abs",
+        "all",
+        "any",
+        "bool",
+        "dict",
+        "divmod",
+        "enumerate",
+        "filter",
+        "float",
+        "int",
+        "len",
+        "list",
+        "map",
+        "max",
+        "min",
+        "print",
+        "range",
+        "reversed",
+        "round",
+        "set",
+        "sorted",
+        "str",
+        "sum",
+        "tuple",
+        "zip",
     )
 }
 

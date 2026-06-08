@@ -6,6 +6,7 @@ invariant holds over HTTP (not just over the in-process Controller).
 
 Run with: python -m lile.tests.smoke_server
 """
+
 from __future__ import annotations
 
 import os
@@ -39,11 +40,17 @@ def main() -> int:
     data_dir = pathlib.Path(tempfile.mkdtemp(prefix="lile_smoke_"))
     cfg = ServeConfig(
         model="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
-        max_seq_length=1024, lora_rank=8, lora_alpha=16,
-        data_dir=data_dir, host="127.0.0.1", port=port,
+        max_seq_length=1024,
+        lora_rank=8,
+        lora_alpha=16,
+        data_dir=data_dir,
+        host="127.0.0.1",
+        port=port,
     )
     app = create_app(cfg)
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    )
 
     t = threading.Thread(target=server.run, daemon=True)
     t.start()
@@ -67,33 +74,47 @@ def main() -> int:
         print("[smoke_server] health OK")
 
         # Submit a train batch.
-        train_r = c.post("/v1/train", json={
-            "objective": "sft",
-            "chunk_size": 1,
-            "samples": [
-                {"prompt": "The zebra's favorite color is",
-                 "response": " fuchsia, because zebras love fuchsia."},
-                {"prompt": "The zebra's favorite color is",
-                 "response": " fuchsia, because zebras love fuchsia."},
-            ],
-        })
+        train_r = c.post(
+            "/v1/train",
+            json={
+                "objective": "sft",
+                "chunk_size": 1,
+                "samples": [
+                    {
+                        "prompt": "The zebra's favorite color is",
+                        "response": " fuchsia, because zebras love fuchsia.",
+                    },
+                    {
+                        "prompt": "The zebra's favorite color is",
+                        "response": " fuchsia, because zebras love fuchsia.",
+                    },
+                ],
+            },
+        )
         assert train_r.status_code == 200, train_r.text
         token = train_r.json()["commit_token"]
         print(f"[smoke_server] train submitted, commit_token={token}")
 
         # Chat with after_commit_token — must block until training commits.
-        chat_r = c.post("/v1/chat/completions", json={
-            "messages": [{"role": "user", "content": "The zebra's favorite color is"}],
-            "max_tokens": 8,
-            "temperature": 0.1,
-            "after_commit_token": token,
-        })
+        chat_r = c.post(
+            "/v1/chat/completions",
+            json={
+                "messages": [
+                    {"role": "user", "content": "The zebra's favorite color is"}
+                ],
+                "max_tokens": 8,
+                "temperature": 0.1,
+                "after_commit_token": token,
+            },
+        )
         assert chat_r.status_code == 200, chat_r.text
         body = chat_r.json()
         reply = body["choices"][0]["message"]["content"]
         cursor = body["lile"]["commit_cursor"]
         print(f"[smoke_server] chat reply={reply!r} (cursor={cursor})")
-        assert cursor >= token, f"chat ran before commit: cursor={cursor}, token={token}"
+        assert cursor >= token, (
+            f"chat ran before commit: cursor={cursor}, token={token}"
+        )
 
         # Trajectory tail must include at least the inference and train_step events.
         tail_r = c.get("/v1/state/trajectory/tail", params={"n": 10})

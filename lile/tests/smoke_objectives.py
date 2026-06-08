@@ -2,6 +2,7 @@
 
 Run with: python -m lile.tests.smoke_objectives
 """
+
 from __future__ import annotations
 
 import os
@@ -32,73 +33,97 @@ def main() -> int:
 
     # ---- SFT ----
     print("[smoke] SFT step…")
-    r = engine.step({
-        "objective": "sft",
-        "samples": [
-            {"prompt": "What is 2+2?", "response": "2+2 equals 4."},
-            {"prompt": "Capital of France?", "response": "Paris."},
-        ],
-    })
+    r = engine.step(
+        {
+            "objective": "sft",
+            "samples": [
+                {"prompt": "What is 2+2?", "response": "2+2 equals 4."},
+                {"prompt": "Capital of France?", "response": "Paris."},
+            ],
+        }
+    )
     print(f"       loss={r['loss']:.4f} components={r['components']}")
     assert r["loss"] is not None
     r["loss"]
 
     print("[smoke] SFT step x3 for descent check…")
     for i in range(3):
-        r = engine.step({
-            "objective": "sft",
-            "samples": [
-                {"prompt": "What is 2+2?", "response": "2+2 equals 4."},
-                {"prompt": "Capital of France?", "response": "Paris."},
-            ],
-        })
-        print(f"       step {i+1}: loss={r['loss']:.4f}")
+        r = engine.step(
+            {
+                "objective": "sft",
+                "samples": [
+                    {"prompt": "What is 2+2?", "response": "2+2 equals 4."},
+                    {"prompt": "Capital of France?", "response": "Paris."},
+                ],
+            }
+        )
+        print(f"       step {i + 1}: loss={r['loss']:.4f}")
 
     # ---- weighted_sft ----
     print("[smoke] weighted_sft step…")
-    r = engine.step({
-        "objective": "weighted_sft",
-        "samples": [
-            {"prompt": "Big number?", "response": "Ten.", "weight": 1.0},
-            {"prompt": "Big number?", "response": "Ten thousand.", "weight": 3.0},
-        ],
-    })
+    r = engine.step(
+        {
+            "objective": "weighted_sft",
+            "samples": [
+                {"prompt": "Big number?", "response": "Ten.", "weight": 1.0},
+                {"prompt": "Big number?", "response": "Ten thousand.", "weight": 3.0},
+            ],
+        }
+    )
     print(f"       loss={r['loss']:.4f} components={r['components']}")
 
     # ---- KTO ----
     print("[smoke] KTO step (no ref)…")
-    r = engine.step({
-        "objective": "kto",
-        "samples": [
-            {"prompt": "Is the sky blue?", "response": "Yes, the sky is blue.", "label": "desirable"},
-            {"prompt": "Is the sky blue?", "response": "No absolutely not never.", "label": "undesirable"},
-        ],
-    })
+    r = engine.step(
+        {
+            "objective": "kto",
+            "samples": [
+                {
+                    "prompt": "Is the sky blue?",
+                    "response": "Yes, the sky is blue.",
+                    "label": "desirable",
+                },
+                {
+                    "prompt": "Is the sky blue?",
+                    "response": "No absolutely not never.",
+                    "label": "undesirable",
+                },
+            ],
+        }
+    )
     print(f"       loss={r['loss']:.4f} components={r['components']}")
 
     # ---- CoH ----
     print("[smoke] CoH step…")
-    r = engine.step({
-        "objective": "coh",
-        "samples": [{
-            "prompt": "Explain photosynthesis briefly.",
-            "bad": "Plants eat sunlight.",
-            "critique": "too terse; mention chlorophyll and CO2",
-            "good": "Plants use chlorophyll to convert sunlight, CO2, and water into glucose and oxygen.",
-        }],
-    })
+    r = engine.step(
+        {
+            "objective": "coh",
+            "samples": [
+                {
+                    "prompt": "Explain photosynthesis briefly.",
+                    "bad": "Plants eat sunlight.",
+                    "critique": "too terse; mention chlorophyll and CO2",
+                    "good": "Plants use chlorophyll to convert sunlight, CO2, and water into glucose and oxygen.",
+                }
+            ],
+        }
+    )
     print(f"       loss={r['loss']:.4f} components={r['components']}")
 
     # ---- Hinge contrastive ----
     print("[smoke] hinge contrastive step…")
-    r = engine.step({
-        "objective": "hinge",
-        "samples": [{
-            "prompt": "Give a greeting.",
-            "chosen": "Hello there, nice to meet you.",
-            "rejected": "greetings human unit",
-        }],
-    })
+    r = engine.step(
+        {
+            "objective": "hinge",
+            "samples": [
+                {
+                    "prompt": "Give a greeting.",
+                    "chosen": "Hello there, nice to meet you.",
+                    "rejected": "greetings human unit",
+                }
+            ],
+        }
+    )
     print(f"       loss={r['loss']:.4f} components={r['components']}")
 
     # ---- Unlike (surgical unlikelihood) ----
@@ -115,47 +140,63 @@ def main() -> int:
     good_ids = tok(text=" 8", add_special_tokens=False).input_ids
     bad_tok = bad_ids[0] if bad_ids else 0
     good_tok = good_ids[0] if good_ids else 1
-    r = engine.step({
-        "objective": "unlike",
-        "samples": [{
-            "prefix": "The answer is",
-            "bad_token_id": int(bad_tok),
-            "rank_below": 100, "prob_above": None,
-        }],
-    })
+    r = engine.step(
+        {
+            "objective": "unlike",
+            "samples": [
+                {
+                    "prefix": "The answer is",
+                    "bad_token_id": int(bad_tok),
+                    "rank_below": 100,
+                    "prob_above": None,
+                }
+            ],
+        }
+    )
     print(f"       loss={r['loss']:.4f} components={r['components']}")
 
     print("[smoke] unlike step (with positive teacher)…")
-    r = engine.step({
-        "objective": "unlike",
-        "samples": [{
-            "prefix": "The answer is",
-            "bad_token_id": int(bad_tok),
-            "good_token_id": int(good_tok),
-            "rank_below": 100, "prob_above": None,
-        }],
-    })
+    r = engine.step(
+        {
+            "objective": "unlike",
+            "samples": [
+                {
+                    "prefix": "The answer is",
+                    "bad_token_id": int(bad_tok),
+                    "good_token_id": int(good_tok),
+                    "rank_below": 100,
+                    "prob_above": None,
+                }
+            ],
+        }
+    )
     print(f"       loss={r['loss']:.4f} components={r['components']}")
 
     # Composition check: unlike + kl_anchor on the same batch. Confirms the
     # prompt/prefix schema fallback in kl._sample_text works end-to-end.
     print("[smoke] unlike + kl_anchor composition…")
-    r = engine.step({
-        "objective": "unlike",
-        "samples": [{
-            "prefix": "The answer is",
-            "bad_token_id": int(bad_tok),
-            "good_token_id": int(good_tok),
-            "rank_below": 100, "prob_above": None,
-        }],
-        "batch_objectives": [{"name": "kl_anchor", "weight": 0.1,
-                              "scope": "prompt"}],
-    })
+    r = engine.step(
+        {
+            "objective": "unlike",
+            "samples": [
+                {
+                    "prefix": "The answer is",
+                    "bad_token_id": int(bad_tok),
+                    "good_token_id": int(good_tok),
+                    "rank_below": 100,
+                    "prob_above": None,
+                }
+            ],
+            "batch_objectives": [
+                {"name": "kl_anchor", "weight": 0.1, "scope": "prompt"}
+            ],
+        }
+    )
     print(f"       loss={r['loss']:.4f} components={r['components']}")
 
     # ---- VRAM report ----
     if torch.cuda.is_available():
-        peak_gb = torch.cuda.max_memory_allocated() / (1024 ** 3)
+        peak_gb = torch.cuda.max_memory_allocated() / (1024**3)
         print(f"[smoke] peak VRAM: {peak_gb:.2f} GB")
 
     print("[smoke] OK")

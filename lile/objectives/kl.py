@@ -19,6 +19,7 @@ Scopes
   not set ``exclude_token_ids`` explicitly; explicit + per-sample are
   UNIONed so a batch-level list widens (never shrinks) the derived one.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -98,7 +99,8 @@ def _derive_exclude_ids(
 
 
 def _tokenize_prefixes_with_last_idx(
-    tokenizer: Any, samples: list[dict[str, Any]],
+    tokenizer: Any,
+    samples: list[dict[str, Any]],
 ) -> dict[str, torch.Tensor]:
     """Build ``(input_ids, attention_mask, last_idx)`` for target-position KL.
 
@@ -119,13 +121,16 @@ def _tokenize_prefixes_with_last_idx(
             try:
                 raw = tokenizer.apply_chat_template(
                     [{"role": "user", "content": text}],
-                    add_generation_prompt=True, tokenize=True, return_tensors=None,
+                    add_generation_prompt=True,
+                    tokenize=True,
+                    return_tensors=None,
                 )
             except TypeError:
                 raw = tokenizer.apply_chat_template(
-                    [{"role": "user",
-                      "content": [{"type": "text", "text": text}]}],
-                    add_generation_prompt=True, tokenize=True, return_tensors=None,
+                    [{"role": "user", "content": [{"type": "text", "text": text}]}],
+                    add_generation_prompt=True,
+                    tokenize=True,
+                    return_tensors=None,
                 )
             ids = _to_int_list(raw)
         else:
@@ -153,8 +158,12 @@ def _tokenize_prefixes_with_last_idx(
 
 
 def _target_position_kl(
-    model: Any, tokenizer: Any, samples: list[dict[str, Any]],
-    pi_ref: Any | None, use_self_ref: bool, weight: float,
+    model: Any,
+    tokenizer: Any,
+    samples: list[dict[str, Any]],
+    pi_ref: Any | None,
+    use_self_ref: bool,
+    weight: float,
     exclude_ids_per_sample: list[set[int]],
 ) -> dict[str, Any]:
     """Single-position KL at each sample's last real token, masking out
@@ -172,21 +181,24 @@ def _target_position_kl(
     attn = batch["attention_mask"].to(device)
     last_idx = batch["last_idx"].to(device)
 
-    logits = model(input_ids=input_ids, attention_mask=attn,
-                   use_cache=False).logits                                 # (B,T,V)
+    logits = model(
+        input_ids=input_ids, attention_mask=attn, use_cache=False
+    ).logits  # (B,T,V)
     with torch.no_grad():
         if use_self_ref:
             with model.disable_adapter():
-                ref_logits = model(input_ids=input_ids, attention_mask=attn,
-                                   use_cache=False).logits
+                ref_logits = model(
+                    input_ids=input_ids, attention_mask=attn, use_cache=False
+                ).logits
         else:
-            ref_logits = pi_ref(input_ids=input_ids,
-                                attention_mask=attn, use_cache=False).logits
+            ref_logits = pi_ref(
+                input_ids=input_ids, attention_mask=attn, use_cache=False
+            ).logits
 
     B, _T, V = logits.size()
     row_idx = torch.arange(B, device=device)
-    last_logits = logits[row_idx, last_idx].float()                        # (B,V)
-    last_ref = ref_logits[row_idx, last_idx].float()                       # (B,V)
+    last_logits = logits[row_idx, last_idx].float()  # (B,V)
+    last_ref = ref_logits[row_idx, last_idx].float()  # (B,V)
 
     # Build per-row exclude mask then mask-fill -inf on BOTH distributions
     # before the softmax so the renormalization is over the same un-excluded
@@ -203,15 +215,15 @@ def _target_position_kl(
     masked_logits = last_logits.masked_fill(exclude_mask, neg_inf)
     masked_ref = last_ref.masked_fill(exclude_mask, neg_inf)
 
-    log_p = F.log_softmax(masked_logits, dim=-1)                           # π_θ
-    log_q = F.log_softmax(masked_ref, dim=-1)                              # π_ref
+    log_p = F.log_softmax(masked_logits, dim=-1)  # π_θ
+    log_q = F.log_softmax(masked_ref, dim=-1)  # π_ref
     p = log_p.exp()
     # Multiply by ``~exclude_mask`` before the sum so any residual mass that
     # the finite-precision softmax assigned to -inf rows is zeroed — not
     # strictly necessary (softmax(-inf)=0) but cheap belt-and-suspenders.
     kl_per_token = p * (log_p - log_q)
     kl_per_token = kl_per_token.masked_fill(exclude_mask, 0.0)
-    kl_per_row = kl_per_token.sum(dim=-1)                                  # (B,)
+    kl_per_row = kl_per_token.sum(dim=-1)  # (B,)
     kl_mean = kl_per_row.mean()
     loss = weight * kl_mean
     return {
@@ -225,40 +237,61 @@ def _target_position_kl(
     }
 
 
-def kl_anchor_loss(model: Any, tokenizer: Any, samples: list[dict[str, Any]],
-                   pi_ref: Any | None = None, weight: float = 0.1,
-                   max_len: int = 512,
-                   pi_ref_mode: str | None = "adapter_disabled",
-                   scope: str = "prompt",
-                   exclude_token_ids: list[int] | None = None,
-                   **_: Any) -> dict[str, Any]:
+def kl_anchor_loss(
+    model: Any,
+    tokenizer: Any,
+    samples: list[dict[str, Any]],
+    pi_ref: Any | None = None,
+    weight: float = 0.1,
+    max_len: int = 512,
+    pi_ref_mode: str | None = "adapter_disabled",
+    scope: str = "prompt",
+    exclude_token_ids: list[int] | None = None,
+    **_: Any,
+) -> dict[str, Any]:
     # If no external pi_ref is provided, fall back to the LoRA-disabled path on
     # the same model (standard PEFT context manager). Only bail out to a no-op
     # zero loss when neither route is available.
-    use_self_ref = (pi_ref is None and pi_ref_mode == "adapter_disabled"
-                    and hasattr(model, "disable_adapter"))
+    use_self_ref = (
+        pi_ref is None
+        and pi_ref_mode == "adapter_disabled"
+        and hasattr(model, "disable_adapter")
+    )
     if pi_ref is None and not use_self_ref:
-        zero = torch.zeros((), device=next(model.parameters()).device, requires_grad=True)
-        return {"loss": zero * weight,
-                "components": {"kl": 0.0, "kl_weight": weight, "kl_scope": scope}}
+        zero = torch.zeros(
+            (), device=next(model.parameters()).device, requires_grad=True
+        )
+        return {
+            "loss": zero * weight,
+            "components": {"kl": 0.0, "kl_weight": weight, "kl_scope": scope},
+        }
     if not samples:
         raise ValueError("kl_anchor_loss requires at least one sample")
 
     if scope == "target_position":
         exclude_per_sample = _derive_exclude_ids(samples, exclude_token_ids)
         return _target_position_kl(
-            model=model, tokenizer=tokenizer, samples=samples,
-            pi_ref=pi_ref, use_self_ref=use_self_ref, weight=weight,
+            model=model,
+            tokenizer=tokenizer,
+            samples=samples,
+            pi_ref=pi_ref,
+            use_self_ref=use_self_ref,
+            weight=weight,
             exclude_ids_per_sample=exclude_per_sample,
         )
 
     texts = [_sample_text(s, scope) for s in samples]
-    tok = tokenizer(text=texts, return_tensors="pt", padding=True, truncation=True,
-                    max_length=max_len)
+    tok = tokenizer(
+        text=texts,
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+        max_length=max_len,
+    )
     device = next(model.parameters()).device
     tok = {k: v.to(device) for k, v in tok.items()}
 
-    logits = model(**tok).logits                                  # (B, T, V)
+    logits = model(**tok).logits  # (B, T, V)
     with torch.no_grad():
         if use_self_ref:
             with model.disable_adapter():
@@ -270,7 +303,7 @@ def kl_anchor_loss(model: Any, tokenizer: Any, samples: list[dict[str, Any]],
     log_p = F.log_softmax(logits.float(), dim=-1)
     log_q = F.log_softmax(ref_logits.float(), dim=-1)
     p = log_p.exp()
-    kl = (p * (log_p - log_q)).sum(dim=-1)                         # (B, T)
+    kl = (p * (log_p - log_q)).sum(dim=-1)  # (B, T)
     attn = tok.get("attention_mask")
     if attn is not None:
         kl = kl * attn.float()

@@ -8,6 +8,7 @@ pattern — including a test that would fail under reordering.
 Run with: pytest -xvs lile/tests/test_queue_cursor.py
          or: python -m lile.tests.test_queue_cursor
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -113,8 +114,9 @@ async def _scenario_fifo_within_queue() -> None:
     await q.stop()
 
     # FIFO: completion order equals submission order.
-    assert completed_order == tokens, \
+    assert completed_order == tokens, (
         f"order drift! submitted={tokens[:5]}... completed={completed_order[:5]}..."
+    )
     print("[test_queue] FIFO completion OK ({} tasks)".format(len(tokens)))
 
 

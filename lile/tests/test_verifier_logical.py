@@ -12,6 +12,7 @@ Covers:
   meanders before committing.
 - ``get_split`` produces a non-empty heldout per domain at 70/30.
 """
+
 from __future__ import annotations
 
 import pytest

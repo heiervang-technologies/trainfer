@@ -27,6 +27,7 @@ bound from ``lile/GLOSSARY.md``). The verifier filter ensures we only
 TTRL prompts whose answer is *extractable* — correctness of that answer
 is a separate concern that the deferred eval gate is designed to detect.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -50,8 +51,8 @@ class TTRLPolicy:
     k_rollouts: int = 4
     idle_threshold_s: float = 30.0
     poll_interval_s: float = 2.0
-    max_per_prompt: int = 3        # lifetime cap per inference offset
-    min_prompts: int = 3           # don't fire until the log has N candidates
+    max_per_prompt: int = 3  # lifetime cap per inference offset
+    min_prompts: int = 3  # don't fire until the log has N candidates
     sampling_temperature: float = 0.8
     sampling_top_p: float = 0.95
 
@@ -112,7 +113,9 @@ def _rollout_key_ext(domain: str, rollout: str) -> tuple[str | None, bool]:
 
 
 def _majority_from_keys(
-    keys: list[str | None], *, min_count: int = 2,
+    keys: list[str | None],
+    *,
+    min_count: int = 2,
 ) -> tuple[int, str] | None:
     """Plurality-with-floor over precomputed rollout keys.
 
@@ -133,7 +136,10 @@ def _majority_from_keys(
 
 
 def majority_vote(
-    rollouts: list[str], domain: str, *, min_count: int = 2,
+    rollouts: list[str],
+    domain: str,
+    *,
+    min_count: int = 2,
 ) -> tuple[int, str] | None:
     """Return ``(winning_rollout_index, equivalence_key)`` or ``None``.
 
@@ -188,7 +194,8 @@ class TTRLScheduler:
         if self._task is not None:
             try:
                 await asyncio.wait_for(
-                    self._task, timeout=self.policy.poll_interval_s * 2 + 1,
+                    self._task,
+                    timeout=self.policy.poll_interval_s * 2 + 1,
                 )
             except asyncio.TimeoutError:
                 self._task.cancel()
@@ -200,7 +207,8 @@ class TTRLScheduler:
             while not self._stop.is_set():
                 try:
                     await asyncio.wait_for(
-                        self._stop.wait(), timeout=self.policy.poll_interval_s,
+                        self._stop.wait(),
+                        timeout=self.policy.poll_interval_s,
                     )
                     return
                 except asyncio.TimeoutError:

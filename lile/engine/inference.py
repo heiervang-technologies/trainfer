@@ -5,6 +5,7 @@ Inference sees the live LoRA instantly — no sync is required because
 training and inference share the same model weights (the single-process
 invariant from DESIGN.md).
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -17,8 +18,9 @@ import torch
 log = logging.getLogger(__name__)
 
 
-def _apply_template(tokenizer: Any, messages: list[dict[str, Any]],
-                    enable_thinking: bool | None) -> str:
+def _apply_template(
+    tokenizer: Any, messages: list[dict[str, Any]], enable_thinking: bool | None
+) -> str:
     """Render the chat template, forwarding ``enable_thinking`` only when
     the caller set it — templates that don't know the flag must not see it.
     """
@@ -28,11 +30,16 @@ def _apply_template(tokenizer: Any, messages: list[dict[str, Any]],
     return tokenizer.apply_chat_template(messages, **kwargs)
 
 
-def generate_chat(model: Any, tokenizer: Any, messages: list[dict[str, str]],
-                  max_new_tokens: int = 256, temperature: float = 0.7,
-                  top_p: float = 0.95,
-                  enable_thinking: bool | None = None,
-                  mode_lock: Any = None) -> str:
+def generate_chat(
+    model: Any,
+    tokenizer: Any,
+    messages: list[dict[str, str]],
+    max_new_tokens: int = 256,
+    temperature: float = 0.7,
+    top_p: float = 0.95,
+    enable_thinking: bool | None = None,
+    mode_lock: Any = None,
+) -> str:
     """OpenAI-style messages → generated assistant text.
 
     `mode_lock` is the ModelState.mode_lock; held across the Unsloth mode flip
@@ -53,6 +60,7 @@ def generate_chat(model: Any, tokenizer: Any, messages: list[dict[str, str]],
     with lock_cm:
         try:
             from unsloth import FastLanguageModel
+
             FastLanguageModel.for_inference(model)
         except Exception:
             pass
@@ -72,16 +80,21 @@ def generate_chat(model: Any, tokenizer: Any, messages: list[dict[str, str]],
                 gen_kwargs["top_p"] = top_p
             out = model.generate(**gen_kwargs)
 
-    gen = out[0, input_ids.size(-1):]
+    gen = out[0, input_ids.size(-1) :]
     text = tokenizer.decode(gen, skip_special_tokens=True).strip()
     return text
 
 
-def generate_chat_stream(model: Any, tokenizer: Any, messages: list[dict[str, str]],
-                         max_new_tokens: int = 256, temperature: float = 0.7,
-                         top_p: float = 0.95,
-                         enable_thinking: bool | None = None,
-                         mode_lock: Any = None) -> Iterator[str]:
+def generate_chat_stream(
+    model: Any,
+    tokenizer: Any,
+    messages: list[dict[str, str]],
+    max_new_tokens: int = 256,
+    temperature: float = 0.7,
+    top_p: float = 0.95,
+    enable_thinking: bool | None = None,
+    mode_lock: Any = None,
+) -> Iterator[str]:
     """Yield decoded text chunks as the model generates them.
 
     Uses ``TextIteratorStreamer`` — generate() runs in a background thread,
@@ -105,12 +118,15 @@ def generate_chat_stream(model: Any, tokenizer: Any, messages: list[dict[str, st
     with lock_cm:
         try:
             from unsloth import FastLanguageModel
+
             FastLanguageModel.for_inference(model)
         except Exception:
             pass
 
         streamer = TextIteratorStreamer(
-            tokenizer, skip_prompt=True, skip_special_tokens=True,
+            tokenizer,
+            skip_prompt=True,
+            skip_special_tokens=True,
         )
 
         def _run():

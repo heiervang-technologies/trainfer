@@ -5,6 +5,7 @@ a single endpoint; the daemon chooses the objective later. All training
 material and all feedback lands here first, always — this is the canonical
 record that lets us replay, re-weight, or apply new methods to old feedback.
 """
+
 from __future__ import annotations
 
 import json
@@ -61,6 +62,7 @@ class TrajectoryLog:
         # that exercise only the writer don't need the web stack).
         try:
             from .middleware import current_request_id  # noqa: PLC0415
+
             rid = current_request_id()
         except Exception:
             rid = None
@@ -68,25 +70,38 @@ class TrajectoryLog:
             payload["request_id"] = rid
         return self.append_raw(payload)
 
-    def log_inference(self, response_id: str, prompt: str, response: str,
-                      model_fingerprint: str) -> int:
-        return self.log_event("inference", {
-            "response_id": response_id,
-            "prompt": prompt,
-            "response": response,
-            "model_fingerprint": model_fingerprint,
-        })
+    def log_inference(
+        self, response_id: str, prompt: str, response: str, model_fingerprint: str
+    ) -> int:
+        return self.log_event(
+            "inference",
+            {
+                "response_id": response_id,
+                "prompt": prompt,
+                "response": response,
+                "model_fingerprint": model_fingerprint,
+            },
+        )
 
     def log_feedback(self, response_id: str, kind: str, **fields: Any) -> int:
-        return self.log_event("feedback", {
-            "response_id": response_id,
-            "feedback_kind": kind,
-            **fields,
-        })
+        return self.log_event(
+            "feedback",
+            {
+                "response_id": response_id,
+                "feedback_kind": kind,
+                **fields,
+            },
+        )
 
-    def log_train(self, batch_id: str, objective: str, loss: float,
-                  batch_size: int, commit_token: int,
-                  components: dict[str, Any] | None = None) -> int:
+    def log_train(
+        self,
+        batch_id: str,
+        objective: str,
+        loss: float,
+        batch_size: int,
+        commit_token: int,
+        components: dict[str, Any] | None = None,
+    ) -> int:
         data: dict[str, Any] = {
             "batch_id": batch_id,
             "objective": objective,

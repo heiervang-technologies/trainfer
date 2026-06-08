@@ -11,6 +11,7 @@ All envelopes include a ``request_id`` read from the ``lile.middleware``
 contextvar. An ``X-Request-ID`` response header is set to match, so clients
 that only inspect headers still see the id.
 """
+
 from __future__ import annotations
 
 import logging
@@ -52,7 +53,11 @@ def _respond(
 ) -> JSONResponse:
     rid = _resolve_request_id()
     body = envelope_payload(
-        code=code, message=message, retryable=retryable, request_id=rid, retry_after_ms=retry_after_ms
+        code=code,
+        message=message,
+        retryable=retryable,
+        request_id=rid,
+        retry_after_ms=retry_after_ms,
     )
     headers = {REQUEST_ID_HEADER: rid}
     if retry_after_ms is not None:
@@ -90,7 +95,8 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _validation_handler(
-        _req: Request, exc: RequestValidationError,
+        _req: Request,
+        exc: RequestValidationError,
     ) -> JSONResponse:
         return _respond(
             status_code=400,

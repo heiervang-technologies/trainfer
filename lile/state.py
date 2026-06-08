@@ -33,6 +33,7 @@ A fallback ``forward_pre_hook`` is also registered on ``base_layer`` so the
 standard PEFT path (used under ``model.disable_adapter()`` for the KL anchor)
 still applies the residual.
 """
+
 from __future__ import annotations
 
 import functools
@@ -78,7 +79,8 @@ def _install_matmul_lora_patch() -> None:
             "(got %s, expected %s) — skipping residual patch install. "
             "Live residual via fast path is DISABLED; PEFT forward_pre_hook "
             "backstop still covers disable_adapter() codepaths.",
-            params, _EXPECTED_MATMUL_LORA_PARAMS,
+            params,
+            _EXPECTED_MATMUL_LORA_PARAMS,
         )
         return
 
@@ -92,8 +94,9 @@ def _install_matmul_lora_patch() -> None:
         # model compute dtype. Skip the per-forward .to() syscall when the
         # dtype/device already match (the common path on bf16 pipelines).
         if delta.dtype != out_res.dtype or delta.device != out_res.device:
-            delta = delta.to(dtype=out_res.dtype, device=out_res.device,
-                             non_blocking=True)
+            delta = delta.to(
+                dtype=out_res.dtype, device=out_res.device, non_blocking=True
+            )
         return out_res + F.linear(X, delta)
 
     _patched._lile_patched = True  # type: ignore[attr-defined]
@@ -135,7 +138,8 @@ def install() -> None:
 @dataclass
 class ModelState:
     """Owns the live model + tokenizer + LoRA config."""
-    model: Any                      # FastLanguageModel-wrapped PEFT model
+
+    model: Any  # FastLanguageModel-wrapped PEFT model
     tokenizer: Any
     base_model_name: str
     lora_rank: int
@@ -186,8 +190,13 @@ class ModelState:
             model,
             r=lora_rank,
             target_modules=[
-                "q_proj", "k_proj", "v_proj", "o_proj",
-                "gate_proj", "up_proj", "down_proj",
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
             ],
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
@@ -224,7 +233,9 @@ class ModelState:
             named = dict(self.model.named_parameters())
             for name, t in sd.items():
                 if name in named:
-                    named[name].data.copy_(t.to(named[name].dtype).to(named[name].device))
+                    named[name].data.copy_(
+                        t.to(named[name].dtype).to(named[name].device)
+                    )
 
     # ------------------------------------------------------------------ merge
     def merge_active_into_residual(self) -> None:
@@ -253,7 +264,7 @@ class ModelState:
                 B = module.lora_B["default"].weight  # (out, r)
                 if A.abs().sum() == 0 and B.abs().sum() == 0:
                     continue
-                delta = (B @ A).to(torch.float32) * scale            # (out, in)
+                delta = (B @ A).to(torch.float32) * scale  # (out, in)
                 key = f"{name}.weight"
                 prev = self.merged_deltas.get(key)
                 if prev is not None:
@@ -265,7 +276,8 @@ class ModelState:
         self._apply_residual_to_model()
         log.info(
             "merged %d LoRA sites; total merges=%d",
-            len(new_deltas), self.merges_applied,
+            len(new_deltas),
+            self.merges_applied,
         )
 
     # ------------------------------------------------------------------ residual → live
@@ -325,7 +337,9 @@ class ModelState:
             delta_cpu = self.merged_deltas.get(key)
             if delta_cpu is None:
                 continue
-            delta_gpu = delta_cpu.to(device=device, dtype=torch.bfloat16, non_blocking=True)
+            delta_gpu = delta_cpu.to(
+                device=device, dtype=torch.bfloat16, non_blocking=True
+            )
             base_layer = getattr(module, "base_layer", None)
             target_w = base_layer.weight if base_layer is not None else None
             if target_w is None:
@@ -345,11 +359,14 @@ class ModelState:
                 )
                 self._residual_hook_handles[name] = handle
             applied += 1
-        log.info("applied residual to %d LoRA sites (matmul_lora + forward_hook)", applied)
+        log.info(
+            "applied residual to %d LoRA sites (matmul_lora + forward_hook)", applied
+        )
 
     def residual_fingerprint(self) -> str:
         """Deterministic hash of the CPU residual — used by snapshot round-trip tests."""
         import hashlib
+
         h = hashlib.sha256()
         for k in sorted(self.merged_deltas.keys()):
             t = self.merged_deltas[k]
@@ -372,6 +389,7 @@ class ModelState:
         ``cfg.frozen_ref=True`` so the VRAM cost is opt-in.
         """
         from unsloth import FastLanguageModel
+
         if self.frozen_ref is not None:
             log.info("frozen reference already loaded — skipping")
             return
@@ -395,6 +413,7 @@ class ModelState:
 
     def save_residual(self, path: Path) -> None:
         from safetensors.torch import save_file
+
         path.parent.mkdir(parents=True, exist_ok=True)
         if not self.merged_deltas:
             # safetensors refuses empty; write a sentinel.
@@ -406,6 +425,7 @@ class ModelState:
 
     def load_residual(self, path: Path) -> None:
         from safetensors.torch import load_file
+
         if not path.exists():
             self.merged_deltas = {}
             return
@@ -420,10 +440,12 @@ def _make_residual_forward_hook(delta_gpu: torch.Tensor):
     ``_apply_residual_to_model``; the per-forward .to() only fires on a true
     mismatch (e.g. a layer in fp16 while the residual is bf16).
     """
+
     def _hook(module: Any, inputs: tuple, output: torch.Tensor) -> torch.Tensor:
         x = inputs[0] if isinstance(inputs, tuple) else inputs
         delta = delta_gpu
         if delta.dtype != output.dtype or delta.device != output.device:
             delta = delta.to(dtype=output.dtype, device=output.device)
         return output + F.linear(x, delta)
+
     return _hook

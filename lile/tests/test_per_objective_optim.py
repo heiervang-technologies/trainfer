@@ -24,6 +24,7 @@ anti-patterns correction note. This file pins:
      within a loose band — the regression we guard against is "per-
      objective mode silently produces zero or runaway updates".
 """
+
 from __future__ import annotations
 
 import pytest
@@ -65,9 +66,7 @@ def test_flag_default_off_on_serve_config():
     assert cfg.per_objective_optim is False, (
         "per_objective_optim must be False by default — VRAM cost is real"
     )
-    assert cfg.per_objective_lr == {}, (
-        "per_objective_lr default must be an empty dict"
-    )
+    assert cfg.per_objective_lr == {}, "per_objective_lr default must be an empty dict"
 
 
 def test_shared_mode_reuses_single_optimizer_across_objectives():
@@ -180,11 +179,17 @@ def test_exp_avg_sq_buffers_isolated_after_two_steps(monkeypatch):
     after a single step: ``exp_avg_sq = 0.001 * g²`` (plus tiny fp noise).
     """
     import builtins
+
     real_import = builtins.__import__
-    monkeypatch.setattr(builtins, "__import__", lambda n, *a, **k: (
-        real_import(n, *a, **k) if n != "bitsandbytes"
-        else (_ for _ in ()).throw(ImportError("forced"))
-    ))
+    monkeypatch.setattr(
+        builtins,
+        "__import__",
+        lambda n, *a, **k: (
+            real_import(n, *a, **k)
+            if n != "bitsandbytes"
+            else (_ for _ in ()).throw(ImportError("forced"))
+        ),
+    )
 
     engine = _fresh_engine(per_objective=True)
     params = [p for p in engine.state.model.parameters() if p.requires_grad]
@@ -240,6 +245,7 @@ def test_delta_norm_ratio_shared_vs_per_objective_in_band(monkeypatch):
     """
     # Force the shared path into the torch.AdamW fallback.
     import builtins
+
     real_import = builtins.__import__
 
     def no_bnb(name, *args, **kwargs):

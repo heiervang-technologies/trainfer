@@ -6,6 +6,7 @@ smoke_objectives tests once the flag is plumbed through the controller.
 
 Run: python -m lile.tests.test_kl_scope
 """
+
 from __future__ import annotations
 
 import sys

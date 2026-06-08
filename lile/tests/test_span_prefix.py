@@ -15,6 +15,7 @@ checks:
 
 Run with: python -m lile.tests.test_span_prefix
 """
+
 from __future__ import annotations
 
 import os

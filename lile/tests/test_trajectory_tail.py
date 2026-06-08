@@ -14,6 +14,7 @@ Covers:
 
 Run with: python -m lile.tests.test_trajectory_tail
 """
+
 from __future__ import annotations
 
 import sys
@@ -44,14 +45,21 @@ def test_log_train_back_compat_no_components():
 def test_log_train_with_components_serializes_types():
     with tempfile.TemporaryDirectory() as td:
         log = _fresh_log(Path(td))
-        log.log_train("b1", "kto", 0.42, 4, 2, components={
-            "loss": 0.42,
-            "kto_z0": 0.11,
-            "kto_z0_source": "adapter_disabled",
-            "grad_norm_total": 1.3,
-            "grad_clipped": False,
-            "junk": object(),  # unserializable → dropped
-        })
+        log.log_train(
+            "b1",
+            "kto",
+            0.42,
+            4,
+            2,
+            components={
+                "loss": 0.42,
+                "kto_z0": 0.11,
+                "kto_z0_source": "adapter_disabled",
+                "grad_norm_total": 1.3,
+                "grad_clipped": False,
+                "junk": object(),  # unserializable → dropped
+            },
+        )
         ev = log.tail(1)[0]
         comp = ev["components"]
         assert comp["loss"] == 0.42

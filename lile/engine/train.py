@@ -5,6 +5,7 @@ does NOT own the model — the ModelState owns the model, and this engine
 takes it as a dependency. Same for the optimizer, which we create lazily
 on first backward.
 """
+
 from __future__ import annotations
 
 import logging
@@ -25,10 +26,15 @@ _SHARED_KEY = ""
 
 
 class TrainEngine:
-    def __init__(self, state: ModelState, lr: float = 1e-5,
-                 grad_clip: float = 1.0, per_objective: bool = False,
-                 per_objective_lr: dict[str, float] | None = None,
-                 default_watchlist: list[int] | None = None) -> None:
+    def __init__(
+        self,
+        state: ModelState,
+        lr: float = 1e-5,
+        grad_clip: float = 1.0,
+        per_objective: bool = False,
+        per_objective_lr: dict[str, float] | None = None,
+        default_watchlist: list[int] | None = None,
+    ) -> None:
         self.state = state
         self.lr = lr
         self.grad_clip = grad_clip
@@ -64,6 +70,7 @@ class TrainEngine:
                 # 8-bit Adam if bitsandbytes is present, else plain AdamW.
                 try:
                     import bitsandbytes as bnb
+
                     opt = bnb.optim.AdamW8bit(params, lr=self.lr)
                     log.info("using bitsandbytes AdamW8bit (lr=%g)", self.lr)
                 except Exception:
@@ -84,6 +91,7 @@ class TrainEngine:
         # the pre-snapshot weight trajectory, which is stale after a restore.
         # See review finding C-3.
         from ..objectives.kto import _Z0_EMA
+
         _Z0_EMA.clear()
 
     def step(self, spec: dict[str, Any]) -> dict[str, Any]:
@@ -120,6 +128,7 @@ class TrainEngine:
             # Training mode + LoRA grads on.
             try:
                 from unsloth import FastLanguageModel
+
                 FastLanguageModel.for_training(self.state.model)
             except Exception:
                 pass
@@ -142,7 +151,8 @@ class TrainEngine:
             # Keeps the primitive pure — no reach-through into config.
             if "effective_lr" not in kwargs:
                 kwargs["effective_lr"] = self.per_objective_lr.get(
-                    name, self.lr,
+                    name,
+                    self.lr,
                 )
             if "batch_objectives" not in kwargs:
                 kwargs["batch_objectives"] = list(
@@ -165,19 +175,25 @@ class TrainEngine:
                     # the sidecar piggybacks rather than re-tokenizing.
                     # Missing keys ⇒ safety_monitor raises RuntimeError on
                     # the caller — that's the contract (test 9).
-                    for k in ("target_positions", "target_token_ids",
-                              "input_ids", "attention_mask"):
+                    for k in (
+                        "target_positions",
+                        "target_token_ids",
+                        "input_ids",
+                        "attention_mask",
+                    ):
                         if k in result and k not in bo_kwargs:
                             bo_kwargs[k] = result[k]
                     bo_kwargs.setdefault(
-                        "default_watchlist", self.default_watchlist,
+                        "default_watchlist",
+                        self.default_watchlist,
                     )
                     bo_kwargs.setdefault(
                         "effective_lr",
                         self.per_objective_lr.get(name, self.lr),
                     )
-                bo_result = bo_fn(self.state.model, self.state.tokenizer,
-                                  samples, **bo_kwargs)
+                bo_result = bo_fn(
+                    self.state.model, self.state.tokenizer, samples, **bo_kwargs
+                )
                 bo_loss = bo_result.get("loss")
                 if bo_loss is not None:
                     loss = (loss if loss is not None else 0.0) + bo_loss
@@ -220,18 +236,28 @@ class TrainEngine:
             # (live + merged residual). Complement each other on the dashboard.
             # C-4: Previous per-param loop caused 100+ kernel launches; now
             # a single torch.cat + norm() call.
-            grad_params = [p.detach().flatten() for p in self.state.model.parameters() if p.requires_grad]
+            grad_params = [
+                p.detach().flatten()
+                for p in self.state.model.parameters()
+                if p.requires_grad
+            ]
             if grad_params:
                 components["adapter_norm_total"] = float(torch.cat(grad_params).norm())
             else:
                 components["adapter_norm_total"] = 0.0
             if self.state.merged_deltas:
-                residual_flat = torch.cat([d.detach().flatten() for d in self.state.merged_deltas.values()])
+                residual_flat = torch.cat(
+                    [d.detach().flatten() for d in self.state.merged_deltas.values()]
+                )
                 components["residual_norm_total"] = float(residual_flat.norm())
             else:
                 components["residual_norm_total"] = 0.0
 
-            return {"loss": components["loss"], "components": components, "skipped": False}
+            return {
+                "loss": components["loss"],
+                "components": components,
+                "skipped": False,
+            }
 
     def _step_multi(self, spec: dict[str, Any]) -> dict[str, Any]:
         """Combined-loss path: Σᵢ wᵢ·Lᵢ in one backward pass.
@@ -325,19 +351,25 @@ class TrainEngine:
             if self.state.frozen_ref is not None and "pi_ref" not in bo_kwargs:
                 bo_kwargs["pi_ref"] = self.state.frozen_ref
             if bo_name == "safety_monitor" and first_result is not None:
-                for k in ("target_positions", "target_token_ids",
-                          "input_ids", "attention_mask"):
+                for k in (
+                    "target_positions",
+                    "target_token_ids",
+                    "input_ids",
+                    "attention_mask",
+                ):
                     if k in first_result and k not in bo_kwargs:
                         bo_kwargs[k] = first_result[k]
                 bo_kwargs.setdefault(
-                    "default_watchlist", self.default_watchlist,
+                    "default_watchlist",
+                    self.default_watchlist,
                 )
                 bo_kwargs.setdefault(
                     "effective_lr",
                     self.per_objective_lr.get(primaries[0]["name"], self.lr),
                 )
-            bo_result = bo_fn(self.state.model, self.state.tokenizer,
-                              bo_samples, **bo_kwargs)
+            bo_result = bo_fn(
+                self.state.model, self.state.tokenizer, bo_samples, **bo_kwargs
+            )
             bo_loss = bo_result.get("loss")
             if bo_loss is not None:
                 total_loss = (total_loss if total_loss is not None else 0.0) + bo_loss
@@ -387,13 +419,19 @@ class TrainEngine:
         # Post-step adapter + residual norm — single GPU kernel via cat.
         # C-4: Previous per-param loop caused 100+ kernel launches; now
         # a single torch.cat + norm() call.
-        grad_params = [p.detach().flatten() for p in self.state.model.parameters() if p.requires_grad]
+        grad_params = [
+            p.detach().flatten()
+            for p in self.state.model.parameters()
+            if p.requires_grad
+        ]
         if grad_params:
             components["adapter_norm_total"] = float(torch.cat(grad_params).norm())
         else:
             components["adapter_norm_total"] = 0.0
         if self.state.merged_deltas:
-            residual_flat = torch.cat([d.detach().flatten() for d in self.state.merged_deltas.values()])
+            residual_flat = torch.cat(
+                [d.detach().flatten() for d in self.state.merged_deltas.values()]
+            )
             components["residual_norm_total"] = float(residual_flat.norm())
         else:
             components["residual_norm_total"] = 0.0

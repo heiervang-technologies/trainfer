@@ -1,4 +1,5 @@
 """Central configuration. Kept dataclass-simple; no YAML parsing unless asked."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -82,7 +83,7 @@ class ServeConfig:
     logger: str = "null"  # null | wandb | tensorboard | mlflow | trackio
     logger_project: str = "lile"
     logger_run_name: str | None = None
-    logger_log_dir: str | None = None       # tensorboard
+    logger_log_dir: str | None = None  # tensorboard
     logger_tracking_uri: str | None = None  # mlflow
 
     # --- frozen reference model --------------------------------------------
@@ -171,19 +172,22 @@ class ServeConfig:
     rlvr_online: bool = False
     rlvr_k: int = 4
     rlvr_source: str = "mixed"  # "math" | "code" | "arc" | "mixed"
-    rlvr_weights: dict[str, float] = field(default_factory=lambda: {
-        "sft": 0.1,
-        "coh": 1.0,
-        "kto": 1.0,
-        "unlike": 0.5,
-        "kl": 0.05,
-    })
+    rlvr_weights: dict[str, float] = field(
+        default_factory=lambda: {
+            "sft": 0.1,
+            "coh": 1.0,
+            "kto": 1.0,
+            "unlike": 0.5,
+            "kl": 0.05,
+        }
+    )
     rlvr_log_path: str = "lile_data/rlvr_loop.jsonl"
 
 
 @dataclass
 class KLAnchorSpec:
     """Configuration for an optional KL anchor term added once per step."""
-    target: str = "base"   # "base" | "ema" | "snapshot:<name>"
+
+    target: str = "base"  # "base" | "ema" | "snapshot:<name>"
     weight: float = 0.0
     scope: str = "prompt"  # "prompt" | "full_sequence" — see objectives/kl.py

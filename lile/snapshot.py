@@ -4,6 +4,7 @@ A snapshot is `(base_ref, merged_deltas.safetensors, active_adapter.safetensors,
 trajectory_log_offset)` — everything needed to reproduce the live model state.
 See LIVELEARN §3.1.
 """
+
 from __future__ import annotations
 
 import json
@@ -27,7 +28,9 @@ class SnapshotManager:
     def _dir(self, name: str) -> Path:
         return self.root / name
 
-    def save(self, name: str, state: ModelState, log_: TrajectoryLog | None = None) -> Path:
+    def save(
+        self, name: str, state: ModelState, log_: TrajectoryLog | None = None
+    ) -> Path:
         d = self._dir(name)
         d.mkdir(parents=True, exist_ok=True)
         manifest = {
@@ -76,8 +79,11 @@ class SnapshotManager:
         else:
             state.reset_active_adapter()
         state.merges_applied = manifest.get("merges_applied", 0)
-        log.info("snapshot %s loaded (residual fp=%s)", name,
-                 manifest.get("residual_fingerprint"))
+        log.info(
+            "snapshot %s loaded (residual fp=%s)",
+            name,
+            manifest.get("residual_fingerprint"),
+        )
         return manifest
 
     def list(self) -> list[str]:

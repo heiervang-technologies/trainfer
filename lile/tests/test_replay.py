@@ -14,6 +14,7 @@ asyncio.sleep contortions.
 
 Run: python -m lile.tests.test_replay
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -58,10 +59,16 @@ class _FakeController:
         return {"commit_token": len(self.submitted) - 1}
 
 
-def _write_feedback(log: TrajectoryLog, *, kind: str, prompt: str,
-                    response: str, critique: str | None = None,
-                    better_response: str | None = None,
-                    ts: float | None = None) -> int:
+def _write_feedback(
+    log: TrajectoryLog,
+    *,
+    kind: str,
+    prompt: str,
+    response: str,
+    critique: str | None = None,
+    better_response: str | None = None,
+    ts: float | None = None,
+) -> int:
     """Append a feedback event via the public ``append_raw`` helper.
 
     Tests need ``ts`` control that the canonical ``log_feedback`` (which
@@ -88,13 +95,23 @@ def test_idle_gate_blocks_replay():
     with tempfile.TemporaryDirectory() as td:
         log = TrajectoryLog(Path(td) / "t.jsonl")
         for i in range(5):
-            _write_feedback(log, kind="nl_critique_with_rewrite",
-                            prompt=f"p{i}", response="bad",
-                            critique="be nicer", better_response="good")
+            _write_feedback(
+                log,
+                kind="nl_critique_with_rewrite",
+                prompt=f"p{i}",
+                response="bad",
+                critique="be nicer",
+                better_response="good",
+            )
         ctrl = _FakeController(log, _FakeQueue(idle=False))
-        sched = IdleReplayScheduler(ctrl, ReplayPolicy(
-            idle_threshold_s=10, poll_interval_s=0.01, max_replays_per_record=3,
-        ))
+        sched = IdleReplayScheduler(
+            ctrl,
+            ReplayPolicy(
+                idle_threshold_s=10,
+                poll_interval_s=0.01,
+                max_replays_per_record=3,
+            ),
+        )
 
         async def run():
             # Drive the polling loop for a brief window; nothing should replay
@@ -104,7 +121,9 @@ def test_idle_gate_blocks_replay():
             await sched.stop()
 
         asyncio.run(run())
-        assert len(ctrl.submitted) == 0, f"expected 0 replays, got {len(ctrl.submitted)}"
+        assert len(ctrl.submitted) == 0, (
+            f"expected 0 replays, got {len(ctrl.submitted)}"
+        )
         assert sched.stats["idle_checks"] > 0
         print("[replay] idle-gate OK (no replays while queue claims busy)")
 
@@ -113,15 +132,25 @@ def test_per_record_cap_is_respected():
     with tempfile.TemporaryDirectory() as td:
         log = TrajectoryLog(Path(td) / "t.jsonl")
         # Only ONE feedback record — scheduler should replay it until cap.
-        offset = _write_feedback(log, kind="nl_critique_with_rewrite",
-                                 prompt="p", response="bad",
-                                 critique="fix", better_response="good")
+        offset = _write_feedback(
+            log,
+            kind="nl_critique_with_rewrite",
+            prompt="p",
+            response="bad",
+            critique="fix",
+            better_response="good",
+        )
         # min_feedback_records default is 3; relax to 1 for this test.
         ctrl = _FakeController(log, _FakeQueue(idle=True))
-        sched = IdleReplayScheduler(ctrl, ReplayPolicy(
-            idle_threshold_s=0, poll_interval_s=0.01,
-            max_replays_per_record=2, min_feedback_records=1,
-        ))
+        sched = IdleReplayScheduler(
+            ctrl,
+            ReplayPolicy(
+                idle_threshold_s=0,
+                poll_interval_s=0.01,
+                max_replays_per_record=2,
+                min_feedback_records=1,
+            ),
+        )
 
         async def run():
             # Fire _maybe_replay_one four times directly; cap is 2.
@@ -148,20 +177,35 @@ def test_recency_decay_prefers_newer():
         # keep the test honest; tolerance is generous).
         half_life_h = 1.0
         old_ts = now - 10 * 3600 * half_life_h
-        old_off = _write_feedback(log, kind="nl_critique_with_rewrite",
-                                  prompt="p_old", response="bad",
-                                  critique="c", better_response="g", ts=old_ts)
-        new_off = _write_feedback(log, kind="nl_critique_with_rewrite",
-                                  prompt="p_new", response="bad",
-                                  critique="c", better_response="g", ts=now)
+        old_off = _write_feedback(
+            log,
+            kind="nl_critique_with_rewrite",
+            prompt="p_old",
+            response="bad",
+            critique="c",
+            better_response="g",
+            ts=old_ts,
+        )
+        new_off = _write_feedback(
+            log,
+            kind="nl_critique_with_rewrite",
+            prompt="p_new",
+            response="bad",
+            critique="c",
+            better_response="g",
+            ts=now,
+        )
 
         ctrl = _FakeController(log, _FakeQueue(idle=True))
-        sched = IdleReplayScheduler(ctrl, ReplayPolicy(
-            idle_threshold_s=0,
-            max_replays_per_record=9_999,  # no cap
-            recency_half_life_h=half_life_h,
-            min_feedback_records=1,
-        ))
+        sched = IdleReplayScheduler(
+            ctrl,
+            ReplayPolicy(
+                idle_threshold_s=0,
+                max_replays_per_record=9_999,  # no cap
+                recency_half_life_h=half_life_h,
+                min_feedback_records=1,
+            ),
+        )
 
         picks_new = 0
         picks_old = 0
@@ -183,50 +227,82 @@ def test_recency_decay_prefers_newer():
 def test_under_min_records_no_pick():
     with tempfile.TemporaryDirectory() as td:
         log = TrajectoryLog(Path(td) / "t.jsonl")
-        _write_feedback(log, kind="nl_critique_with_rewrite",
-                        prompt="p", response="bad",
-                        critique="c", better_response="g")
+        _write_feedback(
+            log,
+            kind="nl_critique_with_rewrite",
+            prompt="p",
+            response="bad",
+            critique="c",
+            better_response="g",
+        )
         ctrl = _FakeController(log, _FakeQueue(idle=True))
-        sched = IdleReplayScheduler(ctrl, ReplayPolicy(
-            idle_threshold_s=0, min_feedback_records=3,
-        ))
+        sched = IdleReplayScheduler(
+            ctrl,
+            ReplayPolicy(
+                idle_threshold_s=0,
+                min_feedback_records=3,
+            ),
+        )
         assert sched._pick_record() is None
         print("[replay] min_feedback_records gate OK")
 
 
 def test_feedback_to_batch_rewrite_routing():
     """Sanity: pure function handles all 4 feedback kinds."""
-    r = Controller.feedback_to_batch({
-        "feedback_kind": "binary", "prompt": "p", "response": "r", "value": "down",
-    })
+    r = Controller.feedback_to_batch(
+        {
+            "feedback_kind": "binary",
+            "prompt": "p",
+            "response": "r",
+            "value": "down",
+        }
+    )
     assert r["objective"] == "kto"
     assert r["samples"][0]["label"] == "undesirable"
 
-    r = Controller.feedback_to_batch({
-        "feedback_kind": "rewrite", "prompt": "p", "response": "r",
-        "better_response": "better", "weight": 2.0,
-    })
+    r = Controller.feedback_to_batch(
+        {
+            "feedback_kind": "rewrite",
+            "prompt": "p",
+            "response": "r",
+            "better_response": "better",
+            "weight": 2.0,
+        }
+    )
     assert r["objective"] == "weighted_sft"
     assert r["samples"][0]["weight"] == 2.0
 
-    r = Controller.feedback_to_batch({
-        "feedback_kind": "nl_critique", "prompt": "p", "response": "r",
-        "critique": "c",
-    })
+    r = Controller.feedback_to_batch(
+        {
+            "feedback_kind": "nl_critique",
+            "prompt": "p",
+            "response": "r",
+            "critique": "c",
+        }
+    )
     assert r["objective"] == "coh"
     assert "critique" in r["samples"][0]
 
-    r = Controller.feedback_to_batch({
-        "feedback_kind": "nl_critique_with_rewrite", "prompt": "p", "response": "r",
-        "critique": "c", "better_response": "g",
-    })
+    r = Controller.feedback_to_batch(
+        {
+            "feedback_kind": "nl_critique_with_rewrite",
+            "prompt": "p",
+            "response": "r",
+            "critique": "c",
+            "better_response": "g",
+        }
+    )
     assert r["objective"] == "coh"
     assert r["samples"][0]["good"] == "g"
 
     # Under-specified rewrite → None, not exception.
-    r = Controller.feedback_to_batch({
-        "feedback_kind": "rewrite", "prompt": "p", "response": "r",  # no better_response
-    })
+    r = Controller.feedback_to_batch(
+        {
+            "feedback_kind": "rewrite",
+            "prompt": "p",
+            "response": "r",  # no better_response
+        }
+    )
     assert r is None
 
     # Missing prompt → None.

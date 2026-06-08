@@ -12,6 +12,7 @@ Metrics come from two sources:
 
 See issue #13 for the full spec.
 """
+
 from __future__ import annotations
 
 import logging
@@ -107,7 +108,18 @@ lile_queue_depth_high_total = Counter(
 # Buckets cover the ms-to-tens-of-seconds range both train-step and generate
 # paths actually exercise.
 _LATENCY_SECONDS_BUCKETS = (
-    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1.0,
+    2.5,
+    5.0,
+    10.0,
+    30.0,
 )
 
 _STEP_LATENCY = Histogram(
@@ -201,9 +213,11 @@ class _ControllerGaugeCollector(Collector):
                     # the metrics scraper runs on Prometheus's HTTP thread
                     # WITHOUT mode_lock, so minimizing GPU kernel launches
                     # reduces the race window with backward()/generate().
-                    grad_params = [p.detach().flatten()
-                                   for p in c.state.model.parameters()
-                                   if p.requires_grad]
+                    grad_params = [
+                        p.detach().flatten()
+                        for p in c.state.model.parameters()
+                        if p.requires_grad
+                    ]
                     if grad_params:
                         adapter_norm = float(torch.cat(grad_params).norm())
             except Exception:  # pragma: no cover
@@ -211,8 +225,8 @@ class _ControllerGaugeCollector(Collector):
             try:
                 if c.state is not None and c.state.merged_deltas:
                     residual_flat = torch.cat(
-                        [d.detach().flatten()
-                         for d in c.state.merged_deltas.values()])
+                        [d.detach().flatten() for d in c.state.merged_deltas.values()]
+                    )
                     residual_norm = float(residual_flat.norm())
             except Exception:  # pragma: no cover
                 pass
@@ -340,7 +354,9 @@ def record_request(*, route: str, status: int) -> None:
     _REQUESTS.labels(route=route, status=str(status)).inc()
 
 
-def record_train_step(*, objective: str, latency_s: float, loss: float | None = None) -> None:
+def record_train_step(
+    *, objective: str, latency_s: float, loss: float | None = None
+) -> None:
     """Bump `lile_train_steps_total{objective}` + observe latency/loss histograms."""
     objective = objective or "unknown"
     exemplar = _exemplar()
@@ -349,7 +365,8 @@ def record_train_step(*, objective: str, latency_s: float, loss: float | None = 
     if loss is not None:
         try:
             _OBJECTIVE_LOSS.labels(objective=objective).observe(
-                float(loss), exemplar=exemplar,
+                float(loss),
+                exemplar=exemplar,
             )
         except (TypeError, ValueError):  # pragma: no cover — defensive
             pass
@@ -375,7 +392,8 @@ def record_replay_enqueued(n: int = 1) -> None:
 def record_generate_latency(*, stream: bool, latency_s: float) -> None:
     """Observe `lile_generate_latency_seconds{stream}`. For streams this is TTFT."""
     _GENERATE_LATENCY.labels(stream="true" if stream else "false").observe(
-        latency_s, exemplar=_exemplar(),
+        latency_s,
+        exemplar=_exemplar(),
     )
 
 
@@ -405,7 +423,8 @@ class MetricsMiddleware(BaseHTTPMiddleware):
         except Exception:
             # Let exception handlers format the envelope; count as 500.
             _REQUESTS.labels(
-                route=_resolve_route(request), status="500",
+                route=_resolve_route(request),
+                status="500",
             ).inc()
             raise
         _REQUESTS.labels(route=_resolve_route(request), status=str(status)).inc()

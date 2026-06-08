@@ -10,6 +10,7 @@ readers block on `wait_for(token)` until the worker's completed-cursor passes
 their token. This is a semaphore, not a best-effort signal, and the test in
 tests/test_queue_cursor.py is written to fail under reordering.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -27,7 +28,7 @@ log = logging.getLogger(__name__)
 @dataclass
 class QueueTask:
     token: int
-    kind: str                          # "train" | "merge" | "snapshot" | "custom"
+    kind: str  # "train" | "merge" | "snapshot" | "custom"
     payload: Any
     created_at: float = field(default_factory=time.time)
     # Set by the worker when done; inference waits on this.
@@ -70,9 +71,13 @@ class ComputeQueue:
         self._last_enqueue_ts: float = 0.0
 
     # ------------------------------------------------------------------ enqueue
-    async def try_submit(self, kind: str, payload: Any, batch_id: str = "") -> QueueTask:
+    async def try_submit(
+        self, kind: str, payload: Any, batch_id: str = ""
+    ) -> QueueTask:
         if self._q.full():
-            raise QueueFullError(f"compute queue depth {self.qsize()}/{self.maxsize}; retry after backoff")
+            raise QueueFullError(
+                f"compute queue depth {self.qsize()}/{self.maxsize}; retry after backoff"
+            )
         return await self.submit(kind, payload, batch_id)
 
     async def submit(self, kind: str, payload: Any, batch_id: str = "") -> QueueTask:
@@ -109,6 +114,7 @@ class ComputeQueue:
 
     def qsize(self) -> int:
         return self._q.qsize()
+
     @property
     def committed(self) -> int:
         return self._completed_token
@@ -214,7 +220,8 @@ class ComputeQueue:
         try:
             if deadline_s is not None:
                 await asyncio.wait_for(
-                    asyncio.shield(self._worker_task), timeout=deadline_s,
+                    asyncio.shield(self._worker_task),
+                    timeout=deadline_s,
                 )
             else:
                 await self._worker_task

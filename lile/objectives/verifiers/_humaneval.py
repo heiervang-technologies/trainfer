@@ -15,6 +15,7 @@ LOC budget: 200 lines including tests. If this file exceeds 200 LOC,
 ABORT and pivot to _code.py "Expected output" format per campaign C-001
 constraint 1.
 """
+
 from __future__ import annotations
 
 import concurrent.futures
@@ -23,6 +24,7 @@ import multiprocessing as _mp
 import re
 
 from . import register
+
 # evalplus's untrusted_check uses multiprocessing.Process() without specifying
 # a start method. Python 3.14 defaults to "spawn" on Linux, but evalplus's
 # sandbox relies on fork semantics so the test runner inherits imported
@@ -96,12 +98,14 @@ def _run_check_correctness(problem: dict, code: str, expected: dict) -> dict:
     multiprocessing state.
     """
     import multiprocessing
+
     # force=True is safe here: this runs in a freshly-forked child whose
     # multiprocessing state is independent of the parent. evalplus's nested
     # Process() calls need fork as the start method to inherit our imported
     # modules + sys.path.
     multiprocessing.set_start_method("fork", force=True)
     from evalplus.evaluate import check_correctness
+
     return check_correctness(
         dataset="humaneval",
         completion_id=0,
@@ -136,7 +140,8 @@ def verify(prompt: str, candidate: str) -> bool | None:
     # inherit fork semantics without mutating the parent's start method.
     try:
         with concurrent.futures.ProcessPoolExecutor(
-            max_workers=1, mp_context=_MP_CTX,
+            max_workers=1,
+            mp_context=_MP_CTX,
         ) as ex:
             future = ex.submit(_run_check_correctness, problem, code, expected)
             result = future.result(timeout=30)
@@ -160,10 +165,15 @@ def _test_claims():
     assert claims(g) and not claims("capital?") and not claims("")
     print("  [OK] claims")
 
+
 def _test_extract():
-    assert _extract_code('```python\ndef f():\n    return 1\n```') == "def f():\n    return 1"
+    assert (
+        _extract_code("```python\ndef f():\n    return 1\n```")
+        == "def f():\n    return 1"
+    )
     assert _extract_code("no code") is None
     print("  [OK] extract")
+
 
 def _test_verify():
     _load_data()
@@ -173,7 +183,10 @@ def _test_verify():
         return
     pb = _HUMANEVAL_DATA[tid]
     assert verify(pb["prompt"], pb["canonical_solution"]) is True
-    assert verify(pb["prompt"], "def has_close_elements(n, t):\n    return True\n") is False
+    assert (
+        verify(pb["prompt"], "def has_close_elements(n, t):\n    return True\n")
+        is False
+    )
     print("  [OK] verify")
 
 

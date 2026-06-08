@@ -11,6 +11,7 @@ Verifies the load-bearing claims of the novel contribution:
 
 Run with: python -m lile.tests.test_ccpd_e2e
 """
+
 from __future__ import annotations
 
 import os
@@ -45,25 +46,37 @@ def test_ccpd_forward_and_backward_real_model():
     print("[ccpd] loading Qwen3-0.6B …")
     state = ModelState.load(
         model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
-        max_seq_length=1024, lora_rank=8, lora_alpha=16,
+        max_seq_length=1024,
+        lora_rank=8,
+        lora_alpha=16,
     )
 
     # Real feedback event: prompt, a deliberately-bad response, and a concise critique.
     prompt = "What is ten times six?"
-    bad = ("Ten times six is a multiplication problem where you multiply the number ten "
-           "by the number six, which is a basic arithmetic operation that gives you sixty "
-           "as the result, which is 60.")
+    bad = (
+        "Ten times six is a multiplication problem where you multiply the number ten "
+        "by the number six, which is a basic arithmetic operation that gives you sixty "
+        "as the result, which is 60."
+    )
     critique = "Answer with a single number only. No words."
 
     print("[ccpd] running ccpd_v2_loss (may sample candidates) …")
     t0 = time.time()
     out = ccpd_v2_loss(
-        model=state.model, tokenizer=state.tokenizer,
-        samples=[{
-            "prompt": prompt, "bad": bad, "critique": critique,
-        }],
-        k_aux=4, max_new_tokens=32, tau=0.0,  # force non-skip
-        alpha=0.3, gamma=0.0,  # no KL anchor in this test
+        model=state.model,
+        tokenizer=state.tokenizer,
+        samples=[
+            {
+                "prompt": prompt,
+                "bad": bad,
+                "critique": critique,
+            }
+        ],
+        k_aux=4,
+        max_new_tokens=32,
+        tau=0.0,  # force non-skip
+        alpha=0.3,
+        gamma=0.0,  # no KL anchor in this test
     )
     wall = time.time() - t0
     print(f"[ccpd] loss wall={wall:.1f}s")
@@ -90,7 +103,9 @@ def test_ccpd_tau_spread_skip_triggers():
     print("[ccpd] testing τ-spread skip on identical candidates …")
     state = ModelState.load(
         model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
-        max_seq_length=1024, lora_rank=8, lora_alpha=16,
+        max_seq_length=1024,
+        lora_rank=8,
+        lora_alpha=16,
     )
 
     # Give ccpd identical aux candidates. Since all scores end up identical, the
@@ -98,14 +113,18 @@ def test_ccpd_tau_spread_skip_triggers():
     # must trigger.
     aux = ["Same answer."] * 4
     out = ccpd_v2_loss(
-        model=state.model, tokenizer=state.tokenizer,
-        samples=[{
-            "prompt": "Say something.",
-            "bad": "Same answer.",  # bad dedupes with aux, candidates become 2 (aux[0], unique)
-            "critique": "Be concise.",
-            "aux_candidates": aux,
-        }],
-        k_aux=4, tau=10.0,  # require huge spread — must skip
+        model=state.model,
+        tokenizer=state.tokenizer,
+        samples=[
+            {
+                "prompt": "Say something.",
+                "bad": "Same answer.",  # bad dedupes with aux, candidates become 2 (aux[0], unique)
+                "critique": "Be concise.",
+                "aux_candidates": aux,
+            }
+        ],
+        k_aux=4,
+        tau=10.0,  # require huge spread — must skip
     )
     assert out["loss"] is None, f"expected skip but got loss={out['loss']}"
     assert out["components"]["ccpd_skipped"] == 1.0
@@ -122,14 +141,18 @@ def test_ccpd_actually_improves_rc():
     print("[ccpd] testing r_c improvement after gradient steps …")
     state = ModelState.load(
         model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
-        max_seq_length=1024, lora_rank=8, lora_alpha=16,
+        max_seq_length=1024,
+        lora_rank=8,
+        lora_alpha=16,
     )
 
     prompt = "Describe water."
     critique = "Answer in exactly one short sentence."
-    bad = ("Water is a remarkable, ubiquitous substance composed of hydrogen and oxygen atoms "
-           "bonded covalently, existing as a clear liquid at room temperature, essential to "
-           "all known forms of life, and playing crucial roles in weather, geology, and biology.")
+    bad = (
+        "Water is a remarkable, ubiquitous substance composed of hydrogen and oxygen atoms "
+        "bonded covalently, existing as a clear liquid at room temperature, essential to "
+        "all known forms of life, and playing crucial roles in weather, geology, and biology."
+    )
     good = "Water is a clear liquid made of hydrogen and oxygen."
 
     # Baseline r_c on the good response.
@@ -144,12 +167,21 @@ def test_ccpd_actually_improves_rc():
     )
     for step in range(3):
         out = ccpd_v2_loss(
-            model=state.model, tokenizer=state.tokenizer,
-            samples=[{
-                "prompt": prompt, "bad": bad, "critique": critique,
-                "preferred": good,
-            }],
-            k_aux=2, max_new_tokens=24, tau=0.0, alpha=0.5, gamma=0.0,
+            model=state.model,
+            tokenizer=state.tokenizer,
+            samples=[
+                {
+                    "prompt": prompt,
+                    "bad": bad,
+                    "critique": critique,
+                    "preferred": good,
+                }
+            ],
+            k_aux=2,
+            max_new_tokens=24,
+            tau=0.0,
+            alpha=0.5,
+            gamma=0.0,
         )
         if out["loss"] is None:
             print(f"[ccpd] step {step}: τ-spread skipped (expected sometimes)")
@@ -157,10 +189,13 @@ def test_ccpd_actually_improves_rc():
         opt.zero_grad()
         out["loss"].backward()
         torch.nn.utils.clip_grad_norm_(
-            [p for p in state.model.parameters() if p.requires_grad], 1.0)
+            [p for p in state.model.parameters() if p.requires_grad], 1.0
+        )
         opt.step()
-        print(f"[ccpd] step {step}: loss={float(out['loss']):+.4f} "
-              f"components={ {k: round(v,3) for k,v in out['components'].items()} }")
+        print(
+            f"[ccpd] step {step}: loss={float(out['loss']):+.4f} "
+            f"components={ {k: round(v, 3) for k, v in out['components'].items()} }"
+        )
 
     rc_after = score_rc(state.model, state.tokenizer, prompt, good, critique, beta=0.1)
     print(f"[ccpd] r_c after training : {rc_after:+.4f}")
@@ -191,30 +226,43 @@ def test_ccpd_through_train_engine():
     print("[ccpd] TrainEngine-mediated CCPD v2 path …")
     state = ModelState.load(
         model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
-        max_seq_length=1024, lora_rank=8, lora_alpha=16,
+        max_seq_length=1024,
+        lora_rank=8,
+        lora_alpha=16,
     )
     engine = TrainEngine(state, lr=5e-5)
-    result = engine.step({
-        "objective": "ccpd_v2",
-        "samples": [{
-            "prompt": "How far is the moon?",
-            "bad": "Very far away, quite distant, a remarkable distance indeed.",
-            "critique": "Be concise and numeric.",
-            "preferred": "About 384,000 km.",
-        }],
-        "kwargs": {
-            "k_aux": 2, "max_new_tokens": 24, "tau": 0.0,
-            "alpha": 0.3, "gamma": 0.0,
-        },
-    })
+    result = engine.step(
+        {
+            "objective": "ccpd_v2",
+            "samples": [
+                {
+                    "prompt": "How far is the moon?",
+                    "bad": "Very far away, quite distant, a remarkable distance indeed.",
+                    "critique": "Be concise and numeric.",
+                    "preferred": "About 384,000 km.",
+                }
+            ],
+            "kwargs": {
+                "k_aux": 2,
+                "max_new_tokens": 24,
+                "tau": 0.0,
+                "alpha": 0.3,
+                "gamma": 0.0,
+            },
+        }
+    )
     # If the fix worked, step() completes without AttributeError and the loss
     # is finite (or the τ-skip fired cleanly). Either outcome proves the path
     # doesn't crash on temp_QA.
     assert "loss" in result
     if result["loss"] is not None:
-        assert isinstance(result["loss"], float) and result["loss"] == result["loss"], result
-        print(f"[ccpd] TrainEngine CCPD step OK, loss={result['loss']:+.4f}, "
-              f"components={ {k: round(v,3) for k,v in result['components'].items()} }")
+        assert isinstance(result["loss"], float) and result["loss"] == result["loss"], (
+            result
+        )
+        print(
+            f"[ccpd] TrainEngine CCPD step OK, loss={result['loss']:+.4f}, "
+            f"components={ {k: round(v, 3) for k, v in result['components'].items()} }"
+        )
     else:
         print(f"[ccpd] TrainEngine CCPD step τ-skipped cleanly: {result['components']}")
 

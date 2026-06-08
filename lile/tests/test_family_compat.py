@@ -21,6 +21,7 @@ CPU-only: no model load, no unsloth import. Per-family integration
 `test_residual_live_<family>.py` and runs on GPU. This file pins the
 shared invariants that must survive regardless of family.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock

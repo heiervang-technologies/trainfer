@@ -17,6 +17,7 @@ abandoned task would block until its own timeout.
 
 Run with: ``uv run pytest lile/tests/test_queue_graceful_drain.py``
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -79,6 +80,7 @@ def test_graceful_drain_drops_unpulled_tasks_on_deadline():
     """Queue 3 tasks that each sleep 500ms; drain with 200ms deadline.
     The in-flight task (first) runs to completion; the other two are
     dropped with ShutdownDroppedError and their done events fire."""
+
     async def main():
         from lile.errors import ShutdownDroppedError
         from lile.queue import ComputeQueue
@@ -101,6 +103,7 @@ def test_dropped_task_waiter_resolves_instead_of_hanging():
     """A client holding a commit_token gets a deterministic resolution, not
     a timeout 60s later. ``wait_for`` returns a task carrying
     ``ShutdownDroppedError``, not an ``asyncio.TimeoutError``."""
+
     async def main():
         from lile.errors import ShutdownDroppedError
         from lile.queue import ComputeQueue

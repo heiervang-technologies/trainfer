@@ -11,6 +11,7 @@ This test exercises the install path with a synthetic ``unsloth.kernels.utils``
 module + a tiny linear stand-in for the LoRA matmul. No unsloth, no transformers,
 no GPU.
 """
+
 from __future__ import annotations
 
 import sys
@@ -28,8 +29,10 @@ def _make_stub_matmul_lora():
     the LoRA branch; the test setup attaches ``W._residual_delta`` to assert
     the patch's residual-addition contract.
     """
+
     def matmul_lora(X, W, W_quant, A, B, s, out=None):
         return X @ W.T
+
     return matmul_lora
 
 
@@ -63,6 +66,7 @@ def _fresh_install_state():
     cache so tests can drive the install function independently of any
     earlier-test side effects."""
     from lile import state as state_mod
+
     state_mod.install.cache_clear()
     return state_mod
 
@@ -81,27 +85,31 @@ def test_signature_match_installs_wrapper(monkeypatch):
     assert getattr(utils.matmul_lora, "_lile_patched", False) is True
     assert utils.matmul_lora._lile_original is original
     # Cross-module re-export must also be rewritten.
-    assert fast_lora.matmul_lora is utils.matmul_lora, \
+    assert fast_lora.matmul_lora is utils.matmul_lora, (
         "fast_lora's pre-bound reference must be rebound too"
+    )
 
 
 def test_signature_mismatch_skips_install(monkeypatch, caplog):
     """A matmul_lora with a different signature must be left alone (no patch,
     no crash) — fast-path residual silently disabled, peft hook backstop still
     runs. We assert the warning fires so observability is preserved."""
+
     def odd_signature(inputs, weight):  # wrong arity + names
         return inputs @ weight.T
+
     _, utils, _ = _install_stub_unsloth(monkeypatch, odd_signature)
     state_mod = _fresh_install_state()
 
     with caplog.at_level("WARNING", logger="lile.state"):
         state_mod._install_matmul_lora_patch()
 
-    assert utils.matmul_lora is odd_signature, \
+    assert utils.matmul_lora is odd_signature, (
         "drift detected — original must be preserved untouched"
-    assert any("matmul_lora signature changed" in rec.message
-               for rec in caplog.records), \
-        "drift must surface as a WARNING, not silent"
+    )
+    assert any(
+        "matmul_lora signature changed" in rec.message for rec in caplog.records
+    ), "drift must surface as a WARNING, not silent"
 
 
 def test_install_is_idempotent(monkeypatch):
@@ -210,8 +218,10 @@ def test_residual_dtype_device_cast(monkeypatch):
     """The fast path skips a per-forward .to() syscall when the residual's
     dtype + device already match the kernel output. When they don't, the
     cast happens in-flight and the result is still correct."""
+
     def original(X, W, W_quant, A, B, s, out=None):
         return (X @ W.T).to(torch.float32)  # forces an output dtype != delta
+
     _, utils, _ = _install_stub_unsloth(monkeypatch, original)
     state_mod = _fresh_install_state()
     state_mod._install_matmul_lora_patch()
@@ -239,6 +249,7 @@ def test_whitelist_excludes_this_file():
     """
     from pathlib import Path
     import lile.tests.conftest as conftest_mod
+
     assert Path(__file__).name not in conftest_mod._TORCHLESS_OK, (
         "test_matmul_lora_patch.py imports torch at module scope and MUST NOT be "
         "in _TORCHLESS_OK. Remove it from the whitelist in lile/tests/conftest.py."
