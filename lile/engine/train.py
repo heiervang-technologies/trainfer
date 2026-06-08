@@ -69,7 +69,8 @@ class TrainEngine:
                 opt = torch.optim.AdamW(params, lr=lr)
                 log.info("per-objective AdamW for %r (lr=%g)", objective, lr)
             else:
-                if self.optimizer_class == "lion8bit":
+                optimizer_class = getattr(self, "optimizer_class", "adamw8bit")
+                if optimizer_class == "lion8bit":
                     try:
                         import bitsandbytes as bnb
 
