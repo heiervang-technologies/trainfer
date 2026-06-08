@@ -14,7 +14,7 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import metrics as metrics_mod
 from .config import ServeConfig
@@ -75,8 +75,7 @@ class ChatMessage(BaseModel):
     # for the latest assistant turn only; see its template).
     reasoning_content: str | None = None
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class ChatRequest(BaseModel):
@@ -117,8 +116,7 @@ class TrainSample(BaseModel):
     preferred: str | None = None
     aux_candidates: list[str] | None = None
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class ObjectiveSpec(BaseModel):
@@ -132,8 +130,7 @@ class ObjectiveSpec(BaseModel):
     samples: list[dict[str, Any]] | None = None
     kwargs: dict[str, Any] | None = None
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class TrainRequest(BaseModel):
@@ -149,8 +146,7 @@ class FeedbackRequest(BaseModel):
     response_id: str | None = None
     kind: str  # "binary" | "rewrite" | "preferred" | "nl_critique" | "nl_critique_with_rewrite"
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class SnapshotRequest(BaseModel):
