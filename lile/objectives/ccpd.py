@@ -244,7 +244,7 @@ def ccpd_v2_loss(
                 with model.disable_adapter():
                     ref_logits = model(**tok).logits.float()
             else:
-                ref_logits = pi_ref(**tok).logits.float()
+                ref_logits = pi_ref(**tok).logits.float()  # type: ignore
         log_p = F.log_softmax(logits, dim=-1)
         log_q = F.log_softmax(ref_logits, dim=-1)
         p = log_p.exp()

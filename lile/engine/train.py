@@ -406,7 +406,7 @@ class TrainEngine:
         opt = self._optimizer(_SHARED_KEY)
         opt.zero_grad()
         try:
-            total_loss.backward()
+            total_loss.backward()  # type: ignore
             grad_norm_total: float | None = None
             if self.grad_clip and self.grad_clip > 0:
                 gn = torch.nn.utils.clip_grad_norm_(
@@ -422,7 +422,7 @@ class TrainEngine:
                 torch.cuda.empty_cache()
             raise
 
-        components["loss"] = float(total_loss.detach().cpu())
+        components["loss"] = float(total_loss.detach().cpu())  # type: ignore
         components["objectives_count"] = len(primaries)
         components["objectives_active"] = sum(
             1 for ell in per_primary_losses if ell is not None

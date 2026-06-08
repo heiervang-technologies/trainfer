@@ -191,7 +191,7 @@ def _target_position_kl(
                     input_ids=input_ids, attention_mask=attn, use_cache=False
                 ).logits
         else:
-            ref_logits = pi_ref(
+            ref_logits = pi_ref(  # type: ignore
                 input_ids=input_ids, attention_mask=attn, use_cache=False
             ).logits
 
@@ -297,8 +297,7 @@ def kl_anchor_loss(
             with model.disable_adapter():
                 ref_logits = model(**tok).logits
         else:
-            ref_logits = pi_ref(**tok).logits
-
+            ref_logits = pi_ref(**tok).logits  # type: ignore
     # Mean token KL over the prompt positions.
     log_p = F.log_softmax(logits.float(), dim=-1)
     log_q = F.log_softmax(ref_logits.float(), dim=-1)

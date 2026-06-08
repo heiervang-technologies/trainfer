@@ -223,19 +223,19 @@ def ccd_loss(
             sample_mse = 0.0
             for layer_idx in hidden_layers:
                 # hiddens are tuple of length num_layers + 1
-                t_h = t_hiddens[layer_idx][i, start_t:L_t]
-                s_h = s_hiddens[layer_idx][i, 0:L_s]
+                t_h = t_hiddens[layer_idx][i, start_t:L_t]  # type: ignore
+                s_h = s_hiddens[layer_idx][i, 0:L_s]  # type: ignore
                 sample_mse += F.mse_loss(s_h, t_h)
             mse_mean_sum += sample_mse / len(hidden_layers)
 
     kl_loss = kl_weight * (kl_mean_sum / B)
     loss = kl_loss
-    components = {"ccd_kl": float((kl_mean_sum / B).detach().cpu())}
+    components = {"ccd_kl": float((kl_mean_sum / B).detach().cpu())}  # type: ignore
 
     if match_hidden:
         hidden_loss = hidden_weight * (mse_mean_sum / B)
         loss += hidden_loss
-        components["ccd_hidden"] = float((mse_mean_sum / B).detach().cpu())
+        components["ccd_hidden"] = float((mse_mean_sum / B).detach().cpu())  # type: ignore
 
     if has_response:
         # 4. Optional Response SFT term
