@@ -9,7 +9,7 @@ permissions:
 jobs:
   trailer-hygiene:
     name: Trailer hygiene (no Claude attribution)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     if: github.event_name == 'pull_request'
     permissions:
       contents: read
