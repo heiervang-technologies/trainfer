@@ -43,7 +43,7 @@ def _trivial_lock():
         lock.release()
 
 
-def _fake_state(model: _FakeModel) -> SimpleNamespace:
+def _fake_state(model: _FakeModel) -> Any:
     """Minimum surface TrainEngine reads from ModelState."""
     return SimpleNamespace(
         model=model,

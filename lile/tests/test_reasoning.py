@@ -129,13 +129,14 @@ def test_extract_final_r1_no_tags():
 
 # --------------------------------------------------------------- registry
 def test_registry_hits():
-    assert get_parser_for_model("unsloth/Qwen3.5-9B").start_in_prompt is True
-    assert (
-        get_parser_for_model("unsloth/qwen3-0.6b-unsloth-bnb-4bit").start_in_prompt
-        is True
-    )
-    assert get_parser_for_model("deepseek-ai/DeepSeek-R1").start_in_prompt is False
-    assert get_parser_for_model("mistral/Magistral-Small").start_in_prompt is False
+    p1 = get_parser_for_model("unsloth/Qwen3.5-9B")
+    assert p1 is not None and p1.start_in_prompt is True
+    p2 = get_parser_for_model("unsloth/qwen3-0.6b-unsloth-bnb-4bit")
+    assert p2 is not None and p2.start_in_prompt is True
+    p3 = get_parser_for_model("deepseek-ai/DeepSeek-R1")
+    assert p3 is not None and p3.start_in_prompt is False
+    p4 = get_parser_for_model("mistral/Magistral-Small")
+    assert p4 is not None and p4.start_in_prompt is False
 
 
 def test_registry_gpt_oss_uses_channel_delimiter():

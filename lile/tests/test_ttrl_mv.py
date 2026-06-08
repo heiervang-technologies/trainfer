@@ -46,7 +46,9 @@ class _FakeQueue:
         return self.idle
 
 
-class _FakeController:
+from lile.controller import Controller
+
+class _FakeController(Controller):
     """Minimal Controller stand-in for the TTRL scheduler."""
 
     def __init__(

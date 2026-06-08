@@ -69,7 +69,7 @@ class _StubTokenizer:
 
     def __call__(self, text: str = "", add_special_tokens: bool = False, **_: Any):
         class _E:
-            pass
+            input_ids: torch.Tensor
 
         e = _E()
         ids = [((ord(c) % (V - 1)) + 1) for c in text] or [1]

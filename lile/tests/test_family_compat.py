@@ -27,6 +27,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from typing import cast, Any
 import torch
 
 from lile.engine.train import TrainEngine
@@ -66,7 +67,7 @@ def test_residual_delta_binding_per_family(family: str) -> None:
     W._residual_delta = delta  # type: ignore[attr-defined]
 
     assert hasattr(W, "_residual_delta"), f"{family}: attribute bind failed"
-    assert torch.equal(W._residual_delta, delta), (
+    assert torch.equal(cast(Any, W)._residual_delta, delta), (
         f"{family}: delta identity lost after bind"
     )
 
@@ -80,7 +81,7 @@ def test_residual_delta_binding_per_family(family: str) -> None:
         f"{family}: id(W) shifted under in-place mutation — matmul_lora "
         "patch would fail to locate _residual_delta"
     )
-    assert torch.equal(W._residual_delta, delta), (
+    assert torch.equal(cast(Any, W)._residual_delta, delta), (
         f"{family}: delta detached from Parameter after in-place op"
     )
 

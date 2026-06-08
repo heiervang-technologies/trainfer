@@ -167,8 +167,12 @@ def pad_and_stack(
     for i, t in enumerate(tokenized):
         n = t["input_ids"].size(0)
         ids[i, :n] = t["input_ids"]
-        labels[i, :n] = t["labels"]
-        attn[i, :n] = t["attention_mask"]
+        if "labels" in t:
+            labels[i, :n] = t["labels"]
+        if "attention_mask" in t:
+            attn[i, :n] = t["attention_mask"]
+        else:
+            attn[i, :n] = 1
     return {"input_ids": ids, "labels": labels, "attention_mask": attn}
 
 

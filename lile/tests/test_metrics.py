@@ -281,16 +281,18 @@ def test_unmatched_route_collapses_to_single_label():
 
     from lile import metrics
 
+    from typing import cast
+    from starlette.requests import Request
+
     class _FakeRequest:
         def __init__(self, path: str) -> None:
             self.scope = {}
             self.url = URL(path)
 
     # Any unmatched path (scanner probes, typos, 404s) collapses to one label.
-    assert metrics._resolve_route(_FakeRequest("/admin")) == "unmatched"
-    assert metrics._resolve_route(_FakeRequest("/..%2fsecret")) == "unmatched"
-    assert metrics._resolve_route(_FakeRequest("/")) == "unmatched"
-
+    assert metrics._resolve_route(cast(Request, _FakeRequest("/admin"))) == "unmatched"
+    assert metrics._resolve_route(cast(Request, _FakeRequest("/..%2fsecret"))) == "unmatched"
+    assert metrics._resolve_route(cast(Request, _FakeRequest("/"))) == "unmatched"
 
 def test_metrics_route_wired_in_server():
     """The real server.py must expose /metrics. Checked without triggering
@@ -305,7 +307,7 @@ def test_metrics_route_wired_in_server():
     app = create_app(cfg)
     # Enumerate registered paths without entering a TestClient context, which
     # would fire the startup event and call Controller.start → model load.
-    paths = [r.path for r in app.routes if hasattr(r, "path")]
+    paths = [getattr(r, "path") for r in app.routes if hasattr(r, "path")]
     assert "/metrics" in paths
 
 

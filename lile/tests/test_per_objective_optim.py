@@ -54,8 +54,11 @@ class _ToyState:
             p.requires_grad_(True)
 
 
+from typing import cast
+from lile.state import ModelState
+
 def _fresh_engine(per_objective: bool, **kwargs) -> TrainEngine:
-    return TrainEngine(_ToyState(), lr=1e-3, per_objective=per_objective, **kwargs)
+    return TrainEngine(cast(ModelState, _ToyState()), lr=1e-3, per_objective=per_objective, **kwargs)
 
 
 # ---------- 1. default-off ---------------------------------------------------

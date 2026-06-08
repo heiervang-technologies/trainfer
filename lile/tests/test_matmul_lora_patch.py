@@ -49,10 +49,10 @@ def _install_stub_unsloth(monkeypatch, matmul_lora_impl):
     utils = types.ModuleType("unsloth.kernels.utils")
     fast_lora = types.ModuleType("unsloth.kernels.fast_lora")
 
-    utils.matmul_lora = matmul_lora_impl
+    setattr(utils, "matmul_lora", matmul_lora_impl)
     # Simulate the "re-exported into another submodule" case (fast_lora pre-binds
     # matmul_lora at import time, so a naive patch of utils alone misses it).
-    fast_lora.matmul_lora = matmul_lora_impl
+    setattr(fast_lora, "matmul_lora", matmul_lora_impl)
 
     monkeypatch.setitem(sys.modules, "unsloth", unsloth)
     monkeypatch.setitem(sys.modules, "unsloth.kernels", kernels)
@@ -142,7 +142,7 @@ def test_residual_is_added_when_attribute_present(monkeypatch):
     X = torch.randn(2, 4)
     W = torch.randn(3, 4)
     delta = torch.randn(3, 4)
-    W._residual_delta = delta
+    setattr(W, "_residual_delta", delta)
 
     out = utils.matmul_lora(X, W, None, None, None, 1.0)
     expected = X @ W.T + X @ delta.T
@@ -167,7 +167,7 @@ def test_residual_is_skipped_when_attribute_absent(monkeypatch):
 
 
 def test_residual_is_skipped_when_attribute_is_none(monkeypatch):
-    """Explicit ``W._residual_delta = None`` must be treated the same as
+    """Explicit ``setattr(W, "_residual_delta", None)`` must be treated the same as
     "attribute absent" — no residual addition. ``getattr(W, ..., None)`` in
     state.py:87 covers both cases by design, so this is a regression guard
     against someone later switching to ``hasattr``."""
@@ -178,7 +178,7 @@ def test_residual_is_skipped_when_attribute_is_none(monkeypatch):
 
     X = torch.randn(2, 4)
     W = torch.randn(3, 4)
-    W._residual_delta = None
+    setattr(W, "_residual_delta", None)
 
     out = utils.matmul_lora(X, W, None, None, None, 1.0)
     torch.testing.assert_close(out, X @ W.T, rtol=0, atol=0)
@@ -205,7 +205,7 @@ def test_residual_passes_out_kwarg_through(monkeypatch):
     X = torch.randn(2, 4)
     W = torch.randn(3, 4)
     delta = torch.randn(3, 4)
-    W._residual_delta = delta
+    setattr(W, "_residual_delta", delta)
     buf = torch.empty(2, 3)
 
     out = utils.matmul_lora(X, W, None, None, None, 1.0, out=buf)
@@ -229,7 +229,7 @@ def test_residual_dtype_device_cast(monkeypatch):
     X = torch.randn(2, 4, dtype=torch.float32)
     W = torch.randn(3, 4, dtype=torch.float32)
     delta = torch.randn(3, 4, dtype=torch.bfloat16)
-    W._residual_delta = delta
+    setattr(W, "_residual_delta", delta)
 
     out = utils.matmul_lora(X, W, None, None, None, 1.0)
     assert out.dtype == torch.float32, "output dtype must follow original kernel"

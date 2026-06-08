@@ -98,7 +98,7 @@ class _StubTokenizer:
 
     def __call__(self, text: str = "", add_special_tokens: bool = False, **_: Any):
         class _Enc:
-            pass
+            input_ids: torch.Tensor
 
         e = _Enc()
         # Deterministic token ids — one per char, modulo vocab size.

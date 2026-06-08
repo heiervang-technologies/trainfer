@@ -41,7 +41,9 @@ class _FakeQueue:
         return self.idle
 
 
-class _FakeController:
+from lile.controller import Controller
+
+class _FakeController(Controller):
     """Minimal Controller stand-in for the replay scheduler."""
 
     def __init__(self, trajectory: TrajectoryLog, queue: _FakeQueue) -> None:
@@ -257,6 +259,7 @@ def test_feedback_to_batch_rewrite_routing():
             "value": "down",
         }
     )
+    assert r is not None
     assert r["objective"] == "kto"
     assert r["samples"][0]["label"] == "undesirable"
 
@@ -269,6 +272,7 @@ def test_feedback_to_batch_rewrite_routing():
             "weight": 2.0,
         }
     )
+    assert r is not None
     assert r["objective"] == "weighted_sft"
     assert r["samples"][0]["weight"] == 2.0
 
@@ -280,6 +284,7 @@ def test_feedback_to_batch_rewrite_routing():
             "critique": "c",
         }
     )
+    assert r is not None
     assert r["objective"] == "coh"
     assert "critique" in r["samples"][0]
 
@@ -292,6 +297,7 @@ def test_feedback_to_batch_rewrite_routing():
             "better_response": "g",
         }
     )
+    assert r is not None
     assert r["objective"] == "coh"
     assert r["samples"][0]["good"] == "g"
 

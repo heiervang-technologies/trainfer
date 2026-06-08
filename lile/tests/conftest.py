@@ -70,7 +70,7 @@ def _ast_has_cpu_only_pytestmark(tree: ast.AST) -> bool:
     that's stricter than a text grep (which would also match comments)
     and looser than trying to pattern-match every legal list shape.
     """
-    for node in tree.body:
+    for node in getattr(tree, "body", []):
         if not isinstance(node, ast.Assign):
             continue
         for target in node.targets:

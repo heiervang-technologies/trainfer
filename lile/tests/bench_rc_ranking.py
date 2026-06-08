@@ -32,7 +32,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 os.environ.setdefault("UNSLOTH_DISABLE_STATISTICS", "1")
 
@@ -507,7 +507,7 @@ def spearman(a: list[float], b: list[float]) -> float:
     rho, _ = spearmanr(a, b)
     if rho != rho:  # NaN guard (ties or constant input)
         return 0.0
-    return float(rho)
+    return float(cast(Any, rho))
 
 
 # ---------------------------------------------------------------------- main
