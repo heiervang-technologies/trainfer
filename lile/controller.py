@@ -741,7 +741,7 @@ class Controller:
     async def request_merge(self) -> dict[str, Any]:
         self._reject_if_shutting_down()
         task = await self.queue.submit("merge", {})
-        result = await self.queue.wait_for(task.token, timeout=300.0)
+        result = await self.queue.wait_for(task, timeout=300.0)
         return {
             "commit_token": task.token,
             "result": result.result,
@@ -751,13 +751,13 @@ class Controller:
     async def request_snapshot_save(self, name: str) -> dict[str, Any]:
         self._reject_if_shutting_down()
         task = await self.queue.submit("snapshot_save", {"name": name})
-        result = await self.queue.wait_for(task.token, timeout=300.0)
+        result = await self.queue.wait_for(task, timeout=300.0)
         return {"commit_token": task.token, "result": result.result}
 
     async def request_snapshot_load(self, name: str) -> dict[str, Any]:
         self._reject_if_shutting_down()
         task = await self.queue.submit("snapshot_load", {"name": name})
-        result = await self.queue.wait_for(task.token, timeout=300.0)
+        result = await self.queue.wait_for(task, timeout=300.0)
         return {"commit_token": task.token, "result": result.result}
 
     async def submit_eval_greedy_rank(
@@ -774,7 +774,7 @@ class Controller:
                 "response": response,
             },
         )
-        result = await self.queue.wait_for(task.token, timeout=300.0)
+        result = await self.queue.wait_for(task, timeout=300.0)
         # Unpack the result or surface an error so HTTP callers get a 500.
         if result.error:
             raise result.error

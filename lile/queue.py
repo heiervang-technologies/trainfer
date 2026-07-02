@@ -95,6 +95,8 @@ class ComputeQueue:
 
     # ------------------------------------------------------------------ idleness
     def is_idle_for(self, seconds: float) -> bool:
+        if self._pending:
+            return False
         """True iff the queue is empty AND no submit happened in the last N seconds.
 
         Consulted by the idle replay scheduler (§T4.1) to avoid contending with
@@ -103,8 +105,6 @@ class ComputeQueue:
         is safe to call from any coroutine, and the monotonic float read is
         atomic on CPython.
         """
-        if not self._q.empty():
-            return False
         return (time.monotonic() - self._last_enqueue_ts) >= seconds
 
     # ------------------------------------------------------------------ read-side
@@ -119,14 +119,18 @@ class ComputeQueue:
     def committed(self) -> int:
         return self._completed_token
 
-    async def wait_for(self, token: int, timeout: float | None = None) -> QueueTask:
+    async def wait_for(self, task_or_token: int | QueueTask, timeout: float | None = None) -> QueueTask:
         """Block until the committed cursor >= token."""
-        task = self._pending.get(token)
-        if task is None and token <= self._completed_token:
-            # Already completed and GC'd; that's a valid "seen" state.
-            return QueueTask(token=token, kind="n/a", payload=None)
-        if task is None:
-            raise KeyError(f"unknown token {token}")
+        if isinstance(task_or_token, int):
+            token = task_or_token
+            task = self._pending.get(token)
+            if task is None and token <= self._completed_token:
+                # Already completed and GC'd; that's a valid "seen" state.
+                return QueueTask(token=token, kind="n/a", payload=None)
+            if task is None:
+                raise KeyError(f"unknown token {token}")
+        else:
+            task = task_or_token
         if timeout is None:
             await task.done.wait()
         else:
