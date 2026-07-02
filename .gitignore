@@ -33,6 +33,8 @@ build/
 .worktrees/
 
 # lile runtime artifacts — snapshots, trajectory logs, Unsloth's compiled cache
-lile_data/snapshots/
-lile_data/trajectory.jsonl
+lile_data*/snapshots/
+lile_data*/trajectory.jsonl
 unsloth_compiled_cache/
+.cache/
+.mypy_cache/

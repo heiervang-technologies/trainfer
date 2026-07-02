@@ -29,6 +29,34 @@ import torch.nn.functional as F
 
 from ._utils import _to_int_list
 
+def chunked_kl_div(input_logits: torch.Tensor, target_logits: torch.Tensor, chunk_size: int = 128) -> torch.Tensor:
+    """
+    Computes KL(target || input) over the last dimension, chunking over the flattened
+    preceding dimensions to save memory (avoiding full V-sized log_softmax allocation).
+    """
+    assert input_logits.shape == target_logits.shape
+    orig_shape = input_logits.shape
+    V = orig_shape[-1]
+    
+    inp_flat = input_logits.view(-1, V)
+    tgt_flat = target_logits.view(-1, V)
+    L = inp_flat.shape[0]
+    
+    kl_out = torch.empty(L, device=input_logits.device, dtype=torch.float32)
+    
+    for start_idx in range(0, L, chunk_size):
+        end_idx = min(start_idx + chunk_size, L)
+        inp_chunk = inp_flat[start_idx:end_idx].float()
+        tgt_chunk = tgt_flat[start_idx:end_idx].float()
+        
+        log_inp = F.log_softmax(inp_chunk, dim=-1)
+        log_tgt = F.log_softmax(tgt_chunk, dim=-1)
+        
+        chunk_kl = F.kl_div(log_inp, log_tgt, reduction="none", log_target=True).sum(dim=-1)
+        kl_out[start_idx:end_idx] = chunk_kl
+        
+    return kl_out.view(orig_shape[:-1])
+
 
 _RESPONSE_FIELDS = ("response", "good", "chosen", "better_response")
 
@@ -295,9 +323,7 @@ def kl_anchor_loss(
         else:
             ref_logits = pi_ref(**tok).logits  # type: ignore
     # Mean token KL over the prompt positions.
-    log_p = F.log_softmax(logits.float(), dim=-1)
-    log_q = F.log_softmax(ref_logits.float(), dim=-1)
-    kl = F.kl_div(log_q, log_p, reduction="none", log_target=True).sum(dim=-1)  # (B, T)
+    kl = chunked_kl_div(input_logits=ref_logits, target_logits=logits)  # (B, T)
     attn = tok.get("attention_mask")
     if attn is not None:
         kl = kl * attn.float()

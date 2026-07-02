@@ -48,8 +48,8 @@ def _load_data():
     global _HUMANEVAL_DATA, _HUMANEVAL_EXPECTED, _TASK_BY_PROMPT
     if _HUMANEVAL_DATA is not None:
         return
-    from evalplus.data import get_human_eval_plus, get_human_eval_plus_hash
-    from evalplus.evaluate import get_groundtruth
+    from evalplus.data import get_human_eval_plus, get_human_eval_plus_hash  # type: ignore[import-untyped]
+    from evalplus.evaluate import get_groundtruth  # type: ignore[import-untyped]
 
     _HUMANEVAL_DATA = get_human_eval_plus()
     _HUMANEVAL_EXPECTED = get_groundtruth(
@@ -104,7 +104,7 @@ def _run_check_correctness(problem: dict, code: str, expected: dict) -> dict:
     # Process() calls need fork as the start method to inherit our imported
     # modules + sys.path.
     multiprocessing.set_start_method("fork", force=True)
-    from evalplus.evaluate import check_correctness
+    from evalplus.evaluate import check_correctness  # type: ignore[import-untyped]
 
     return check_correctness(
         dataset="humaneval",
@@ -133,6 +133,7 @@ def verify(prompt: str, candidate: str) -> bool | None:
     if task_id is None:
         return None  # Shouldn't happen in a well-configured loop
 
+    assert _HUMANEVAL_DATA is not None and _HUMANEVAL_EXPECTED is not None
     problem = _HUMANEVAL_DATA[task_id]
     expected = _HUMANEVAL_EXPECTED[task_id]
 
@@ -181,6 +182,7 @@ def _test_verify():
     if tid not in _HUMANEVAL_DATA:
         print("  [SKIP] verify: HumanEval/0 not cached")
         return
+    assert _HUMANEVAL_DATA is not None
     pb = _HUMANEVAL_DATA[tid]
     assert verify(pb["prompt"], pb["canonical_solution"]) is True
     assert (

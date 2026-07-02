@@ -101,9 +101,9 @@ def _compare(got: str, expected: str, mode: str) -> bool:
         es = {x.strip().lower() for x in re.split(r"[,\s]+", e) if x.strip()}
         return gs == es
     if mode == "bool":
-        ng = _norm_bool(g)
-        ne = _norm_bool(e)
-        return ng is not None and ne is not None and ng == ne
+        bg = _norm_bool(g)
+        be = _norm_bool(e)
+        return bg is not None and be is not None and bg == be
     if mode == "regex":
         try:
             return bool(re.fullmatch(e, g, re.IGNORECASE | re.DOTALL))
@@ -136,6 +136,7 @@ def verify(prompt: str, candidate: str) -> bool | None:
     """
     if not claims(prompt):
         return None
+    assert _TASKS is not None
     task_id = _BY_PROMPT[_hash(prompt)]
     task = _TASKS[task_id]
     got = _extract(candidate, task.get("extract"))

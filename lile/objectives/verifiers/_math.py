@@ -82,7 +82,9 @@ def _normalize_fraction(s: str) -> str:
 
 
 def _is_fraction_prompt(prompt: str | None) -> bool:
-    return bool(prompt) and bool(_FRACTION_PROMPT.search(prompt))
+    if not prompt:
+        return False
+    return bool(_FRACTION_PROMPT.search(prompt))
 
 
 def extract_answer(text: str, prompt: str | None = None) -> str | None:

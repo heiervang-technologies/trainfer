@@ -224,10 +224,10 @@ class _ControllerGaugeCollector(Collector):
                 pass
             try:
                 if c.state is not None and c.state.merged_deltas:
-                    residual_flat = torch.cat(
-                        [d.detach().flatten() for d in c.state.merged_deltas.values()]
-                    )
-                    residual_norm = float(residual_flat.norm())
+                    sq_sum = 0.0
+                    for d in c.state.merged_deltas.values():
+                        sq_sum += float(d.detach().float().pow(2).sum())
+                    residual_norm = sq_sum ** 0.5
             except Exception:  # pragma: no cover
                 pass
 

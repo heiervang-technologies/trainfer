@@ -261,10 +261,10 @@ class TrainEngine:
             else:
                 components["adapter_norm_total"] = 0.0
             if self.state.merged_deltas:
-                residual_flat = torch.cat(
-                    [d.detach().flatten() for d in self.state.merged_deltas.values()]
-                )
-                components["residual_norm_total"] = float(residual_flat.norm())
+                sq_sum = 0.0
+                for d in self.state.merged_deltas.values():
+                    sq_sum += float(d.detach().float().pow(2).sum())
+                components["residual_norm_total"] = sq_sum ** 0.5
             else:
                 components["residual_norm_total"] = 0.0
 
@@ -444,10 +444,10 @@ class TrainEngine:
         else:
             components["adapter_norm_total"] = 0.0
         if self.state.merged_deltas:
-            residual_flat = torch.cat(
-                [d.detach().flatten() for d in self.state.merged_deltas.values()]
-            )
-            components["residual_norm_total"] = float(residual_flat.norm())
+            sq_sum = 0.0
+            for d in self.state.merged_deltas.values():
+                sq_sum += float(d.detach().float().pow(2).sum())
+            components["residual_norm_total"] = sq_sum ** 0.5
         else:
             components["residual_norm_total"] = 0.0
 

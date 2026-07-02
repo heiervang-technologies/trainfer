@@ -41,7 +41,6 @@ class _FakeQueue:
         return self.idle
 
 
-from lile.controller import Controller
 
 class _FakeController(Controller):
     """Minimal Controller stand-in for the replay scheduler."""

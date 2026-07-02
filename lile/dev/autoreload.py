@@ -56,7 +56,7 @@ def enable(pattern: str | None = None) -> bool:
         )
         return False
 
-    pat = pattern or os.environ.get("LILE_AUTORELOAD_PATTERN", _DEFAULT_PATTERN)
+    pat = pattern or os.environ.get("LILE_AUTORELOAD_PATTERN") or _DEFAULT_PATTERN
     # Resolve relative to the lile package parent so the daemon can be launched
     # from any cwd and jurigged still watches the right tree. A trailing
     # slash on the path tells jurigged's ``to_filter`` to treat it as a
