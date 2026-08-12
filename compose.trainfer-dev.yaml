@@ -1,0 +1,51 @@
+services:
+  trainfer-dev:
+    image: zot.ht.local/ht-unsloth-studio:latest
+    container_name: trainfer-dev
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+    ports:
+      - "8766:8766"  # demo console (proxy)
+      - "8768:8768"  # trainfer daemon (OpenAI-shaped /v1/*)
+    volumes:
+      # Bind-mount source for live edit. jurigged (TRAINFER_DEV_AUTORELOAD=1) picks
+      # up function-body edits without restarting the daemon. Adding new
+      # FastAPI routes still requires `docker compose restart trainfer-dev`.
+      - ./trainfer:/opt/unsloth/trainfer:rw
+      # Optional: also live-edit unsloth core. Comment out if image's frozen
+      # unsloth is what you want.
+      - ./unsloth:/opt/unsloth/unsloth:rw
+      # Persistent HF cache + trajectory log (survives container rebuild).
+      - trainfer-hf:/data/huggingface
+      - trainfer-data:/opt/unsloth/trainfer_data
+    environment:
+      TRAINFER_HOST: "0.0.0.0"
+      TRAINFER_PROXY_BIND: "0.0.0.0"
+      TRAINFER_PORT: "8768"
+      TRAINFER_PROXY_PORT: "8766"
+      TRAINFER_DEV_AUTORELOAD: "1"
+      TRAINFER_AUTOSAVE_ON_EXIT: "1"
+      TRAINFER_AUTOLOAD_ON_BOOT: "1"
+      HF_HOME: /data/huggingface
+      HF_HUB_ENABLE_HF_TRANSFER: "1"
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    working_dir: /opt/unsloth
+    # Two processes, one container: daemon (in-venv) + stdlib proxy.
+    # The proxy is tolerant of an empty upstream during startup.
+    command: >
+      bash -c "set -e;
+      /opt/unsloth/.venv/bin/python -m pip install --quiet 'prometheus_client>=0.20' jurigged 'transformers==5.3.0' 'huggingface_hub==1.3.0';
+      /opt/unsloth/.venv/bin/python -m trainfer.console.launch &
+      DAEMON=$!;
+      /usr/bin/python3 /opt/unsloth/trainfer/console/proxy.py &
+      PROXY=$!;
+      trap 'kill -TERM $$DAEMON $$PROXY' TERM INT;
+      wait -n $$DAEMON $$PROXY"
+    stop_grace_period: 30s
+
+volumes:
+  trainfer-hf:
+  trainfer-data:

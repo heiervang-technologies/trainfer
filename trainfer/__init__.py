@@ -1,0 +1,17 @@
+"""trainfer — live-learning local LLM daemon. See trainfer/PLAN.md for the spec."""
+
+__version__ = "0.1.0-dev"
+
+try:
+    import unsloth  # noqa: F401
+except ImportError:
+    pass
+
+def install() -> None:
+    """Install the matmul_lora residual patch. Idempotent. Called automatically
+    by ``ModelState.load``; expose here for callers that want to pre-warm
+    before constructing a ModelState (e.g. offline snapshot inspection that
+    subsequently instantiates the model)."""
+    from .state import install as _install
+
+    _install()

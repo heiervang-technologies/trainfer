@@ -32,7 +32,10 @@ build/
 # Per-agent worktrees — see AGENTS.md
 .worktrees/
 
-# lile runtime artifacts — snapshots, trajectory logs, Unsloth's compiled cache
+# trainfer runtime artifacts — snapshots, trajectory logs, Unsloth's compiled cache
+# (lile_data* kept so a pre-rename data dir stays ignored after an upgrade)
+trainfer_data*/snapshots/
+trainfer_data*/trajectory.jsonl
 lile_data*/snapshots/
 lile_data*/trajectory.jsonl
 unsloth_compiled_cache/

@@ -3,13 +3,21 @@ requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lile"
+name = "trainfer"
 dynamic = ["version"]
-description = "lile — LiveLearn local LLM daemon. One mutable model. Always serving. Always trainable."
+description = "trainfer — train and infer at the same time. One mutable model. Always serving. Always trainable."
 readme = "README.md"
 requires-python = ">=3.10,<3.15"
 license = "Apache-2.0"
-keywords = ["llm", "online-learning", "fine-tuning", "rlvr", "lora", "unsloth"]
+keywords = [
+    "llm",
+    "continual-learning",
+    "online-learning",
+    "fine-tuning",
+    "rlvr",
+    "lora",
+    "unsloth",
+]
 authors = [
     {name = "Heiervang Technologies"},
 ]
@@ -30,8 +38,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-eval = [
-    "lm-eval>=0.4.0",
+# ``evalplus`` powers the in-tree HumanEval verifier. The offline eval
+# harness itself moved to the ``cont`` repo along with teach/ — install
+# ``cont`` if you want lm-eval-shaped benchmark runs.
+verifiers = [
     "evalplus>=0.3.0",
 ]
 dev = [
@@ -42,19 +52,18 @@ test = [
 ]
 
 [tool.setuptools.dynamic]
-version = {attr = "lile.__version__"}
+version = {attr = "trainfer.__version__"}
 
 [tool.setuptools.packages.find]
-include = ["lile*"]
-exclude = ["lile.tests*"]
+include = ["trainfer*"]
+exclude = ["trainfer.tests*"]
 
 [tool.pytest.ini_options]
-testpaths = ["lile/tests"]
+testpaths = ["trainfer/tests"]
 python_files = ["test_*.py"]
 markers = [
     "cpu_only: test runs without a GPU (pure function, queue, trajectory, filesystem)",
     "gpu: test requires CUDA (loads a real model, exercises Unsloth kernels)",
-    "eval: test exercises lile.teach.eval harness (stub path without --extra eval)",
 ]
 
 [tool.pyright]
