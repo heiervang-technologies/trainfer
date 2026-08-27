@@ -1,6 +1,8 @@
 services:
   trainfer-dev:
-    image: zot.ht.local/ht-unsloth-studio:latest
+    # Build the studio image from https://github.com/heiervang-technologies/ht-unsloth
+    # and tag it locally as ht-unsloth-studio:latest.
+    image: ht-unsloth-studio:latest
     container_name: trainfer-dev
     runtime: nvidia
     deploy:
