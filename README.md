@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="trainfer" width="440">
+</p>
+
 # trainfer
 
 **Train and infer at the same time.** A single-process FastAPI daemon that shares one set of weights between inference and training.

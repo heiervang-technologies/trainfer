@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-labelledby="title desc">
+  <title id="title">trainfer mark</title>
+  <desc id="desc">Two continuous opposing arrows forming a shared loop.</desc>
+
+  <path d="M43 106C43 62 67 40 100 40C134 40 157 64 157 99"
+        fill="none" stroke="#F7FAFC" stroke-width="34" stroke-linecap="round"/>
+  <path d="M157 94H178L153 123L128 94H145"
+        fill="#F7FAFC" stroke="#F7FAFC" stroke-width="15" stroke-linejoin="round"/>
+  <path d="M157 94C157 138 133 160 100 160C66 160 43 136 43 101"
+        fill="none" stroke="#F7FAFC" stroke-width="34" stroke-linecap="round"/>
+  <path d="M43 106H22L47 77L72 106H55"
+        fill="#F7FAFC" stroke="#F7FAFC" stroke-width="15" stroke-linejoin="round"/>
+
+  <path d="M43 106C43 62 67 40 100 40C134 40 157 64 157 99"
+        fill="none" stroke="#0AAE9B" stroke-width="22" stroke-linecap="round"/>
+  <path d="M157 94H178L153 123L128 94H145Z" fill="#0AAE9B"/>
+  <path d="M157 94C157 138 133 160 100 160C66 160 43 136 43 101"
+        fill="none" stroke="#17233B" stroke-width="22" stroke-linecap="round"/>
+  <path d="M43 106H22L47 77L72 106H55Z" fill="#17233B"/>
+</svg>
