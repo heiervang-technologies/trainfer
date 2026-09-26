@@ -37,6 +37,7 @@ class SnapshotManager:
             "name": name,
             "created_at": time.time(),
             "base_model": state.base_model_name,
+            "adapter": state.adapter.describe(),
             "lora_rank": state.lora_rank,
             "lora_alpha": state.lora_alpha,
             "merges_applied": state.merges_applied,
@@ -51,7 +52,7 @@ class SnapshotManager:
                 {k: v.contiguous() for k, v in state.merged_deltas.items()},
                 str(d / "merged_deltas.safetensors"),
             )
-        # Active adapter (LoRA A/B).
+        # Active adapter (LoRA A/B, or module_sft weight deltas).
         sd = state.extract_active_adapter()
         if sd:
             save_file(sd, str(d / "active_adapter.safetensors"))
@@ -61,6 +62,13 @@ class SnapshotManager:
     def load(self, name: str, state: ModelState) -> dict:
         d = self._dir(name)
         manifest = json.loads((d / "manifest.json").read_text())
+        # Manifests from before adapters were pluggable are all LoRA.
+        saved_kind = (manifest.get("adapter") or {}).get("kind", "lora")
+        if saved_kind != state.adapter.kind:
+            raise ValueError(
+                f"snapshot {name!r} was saved with adapter {saved_kind!r}, "
+                f"but the live model uses {state.adapter.kind!r}"
+            )
         residual_path = d / "merged_deltas.safetensors"
         if residual_path.exists():
             state.merged_deltas = load_file(str(residual_path))

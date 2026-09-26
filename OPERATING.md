@@ -46,7 +46,20 @@ Override the directory at the config layer (`ServeConfig(data_dir=...)`) or via 
 
 - Snapshots are taken through the compute queue (single-writer), so `/v1/state/snapshot/save` is serialized against training and merges.
 - The reserved name `_autosave` is written automatically on graceful shutdown if `cfg.autosave_on_exit` is on, and reloaded at startup if `cfg.autoload_on_boot` is on.
-- Restore is byte-exact: LoRA adapter weights, bf16 CPU residual, merge counter, and the trajectory log offset all roll back together. There is no "partial" restore. On load, the residual is re-bound onto the live model's forward path (`_apply_residual_to_model`), stale hooks are cleared if the snapshot has no residual, and the optimizer is reset so Adam moments don't carry stale trajectory info.
+- Restore is byte-exact: active adapter state, bf16 CPU residual, merge counter, and the trajectory log offset all roll back together. There is no "partial" restore. On load, the residual is re-bound onto the live model's forward path (`_apply_residual_to_model`), stale hooks are cleared if the snapshot has no residual, and the optimizer is reset so Adam moments don't carry stale trajectory info.
+
+## Adapters
+
+`cfg.adapter` picks what is trainable (see [`trainfer/adapters.py`](trainfer/adapters.py)):
+
+| `adapter` | Trains | Key config / CLI |
+|---|---|---|
+| `lora` (default) | PEFT LoRA on `lora_target_modules` | `--lora-rank`, `--lora-alpha`, `--lora-target-modules`, `--rslora` |
+| `module_sft` | every parameter under modules matching `trainable_modules` (fnmatch) | `--adapter module_sft --trainable-modules 'model.norm' '*.post_attention_layernorm' lm_head` |
+
+`module_sft` cannot train 4-bit quantized weights. On the default NF4 base, target norms / `lm_head` / embeddings, or pass `--no-4bit`. It keeps a CPU copy of the pristine weights and a device copy of base ⊕ residual for every trainable parameter, so budget ~2× their size on top of the model. Tied weights (`lm_head` ↔ `embed_tokens`) train as one parameter.
+
+A snapshot records its adapter kind in `manifest.json`; loading it into a daemon running a different kind fails instead of silently skipping weights. Manifests without the field are LoRA.
 
 ## Cross-repo policy
 

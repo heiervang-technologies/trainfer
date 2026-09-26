@@ -24,6 +24,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from ..adapters import has_reference, reference_context
 from ._utils import build_chat_inputs, pad_and_stack, sequence_logprob_mean
 
 log = logging.getLogger(__name__)
@@ -207,9 +208,9 @@ def ccpd_v2_loss(
     # Three modes:
     #   (a) pi_ref is a separate model (explicit arg).
     #   (b) pi_ref is None but pi_ref_mode=="adapter_disabled" and the model
-    #       exposes a `disable_adapter()` context manager (standard PEFT API) —
-    #       run the reference forward with the active LoRA turned off. This
-    #       anchors π_θ toward base + merged_deltas (the session-start policy
+    #       has a reference context (its trainfer adapter, or PEFT's
+    #       `disable_adapter()`) — run the reference forward with the active
+    #       adapter turned off. This anchors π_θ toward base + merged_deltas (the session-start policy
     #       if no merges have happened this session).
     #   (c) Otherwise: KL is zero.
     #
@@ -226,7 +227,7 @@ def ccpd_v2_loss(
         pi_ref is None
         and pi_ref_mode == "adapter_disabled"
         and gamma > 0.0
-        and hasattr(model, "disable_adapter")
+        and has_reference(model)
     )
     if pi_ref is not None or use_self_ref:
         tok = tokenizer(
@@ -241,11 +242,12 @@ def ccpd_v2_loss(
         logits = model(**tok).logits.float()
         with torch.no_grad():
             if use_self_ref:
-                with model.disable_adapter():
+                with reference_context(model):
                     ref_logits = model(**tok).logits.float()
             else:
                 ref_logits = pi_ref(**tok).logits.float()  # type: ignore
         from .kl import chunked_kl_div
+
         kl_per_token = chunked_kl_div(input_logits=ref_logits, target_logits=logits)
         kl = kl_per_token.sum() / logits.size(0)
         L_kl = kl

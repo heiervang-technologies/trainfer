@@ -27,7 +27,8 @@ Corollaries:
 | `trainfer/server.py` | FastAPI routes (`/v1/chat/completions`, `/v1/train`, `/v1/feedback`, `/v1/state/*`, `/v1/wait`, `/health`). OpenAI-compatible SSE. Thin — delegates to `Controller`. |
 | `trainfer/controller.py` | The orchestrator. `generate`, `stream_generate`, `submit_train`, `submit_feedback`, `request_merge`, snapshot save/load. Holds the queue, trajectory, and state. |
 | `trainfer/queue.py` | `ComputeQueue` — single-worker FIFO with monotone `commit_cursor`. `wait_for(token)` is the "POST a batch, next inference sees it" guarantee. |
-| `trainfer/state.py` | `ModelState` — the model, tokenizer, `mode_lock`, `merged_deltas` residual, and the **module-level monkey-patch on `unsloth.kernels.utils.matmul_lora`** that applies `_residual_delta` at forward time. |
+| `trainfer/state.py` | `ModelState` — the model, tokenizer, `mode_lock`, `merged_deltas` residual, and the **module-level monkey-patch on `unsloth.kernels.utils.matmul_lora`** that applies `_residual_delta` at forward time. Adapter-specific work is delegated to `state.adapter`. |
+| `trainfer/adapters.py` | `Adapter` interface + `LoraAdapter` / `ModuleSFTAdapter`: what is trainable, reset-to-identity, snapshot I/O, deltas for merge, residual binding, and the reference-policy context. `reference_context(model)` is what objectives use instead of `model.disable_adapter()`. |
 | `trainfer/engine/train.py` | `TrainEngine.step` — composes registered objectives, runs forward+backward, updates LoRA, returns `{loss, components}`. |
 | `trainfer/engine/inference.py` | `generate_chat` / `generate_chat_stream` — uses HF `TextIteratorStreamer`; holds `mode_lock` across the Unsloth mode flip and the entire generate. |
 | `trainfer/engine/replay.py` | `IdleReplayScheduler` — optional background re-training from the trajectory when the queue is idle. |
@@ -58,6 +59,14 @@ Corollaries:
 3. Add to the Razin-safety table in `GLOSSARY.md`. If not safe, document the anchor / cap that makes it acceptable in-loop.
 4. Write a smoke test in `trainfer/tests/smoke_objectives.py` (finite gradients on Qwen3-0.6B).
 5. For anything beyond T1, add an end-to-end test analogous to `test_ccpd_e2e.py` — at minimum, `test_<name>_forward_and_backward_real_model` proving grads flow through the production `TrainEngine.step` path (after `for_training()`).
+
+### Adding an adapter
+
+1. Subclass `Adapter` in `trainfer/adapters.py` and implement every method. The contract: after `reset`, live == base ⊕ residual; `delta_weights` returns fp32 *additive* per-weight deltas (merge sums them into `merged_deltas`); `reference` returns a context manager that runs the model as base ⊕ residual without breaking a live forward's saved tensors (swap `.data`, never `copy_`).
+2. Register it in `build_adapter` and add its config to `ServeConfig` + `cli.py`.
+3. Add CPU tests to `tests/test_adapters.py` (tiny Llama, merge preserves forward, snapshot round trip, backward survives a reference forward) and a GPU case to `tests/test_adapters_gpu.py`.
+
+Methods whose effect is not an additive weight delta (DoRA, IA³) or has none (prefix tuning) need the contract extended first.
 
 ### Adding a metrics backend
 
@@ -96,6 +105,7 @@ Use `uv`, never `pip`. Every test under `trainfer/tests/` that has `test_` prefi
 
 ## Anti-patterns — do not
 
+- **Do not call `model.disable_adapter()` in objectives or routes.** Use `adapters.reference_context(model)` / `has_reference(model)` — `module_sft` models have no PEFT wrapper, and a reference that isn't routed through the adapter silently turns KL anchors into zero.
 - **Do not introduce a second model instance** (a "reference model" or "inference copy"). KL-anchor uses `disable_adapter()` on the live model by default; the optional frozen-ref toggle (`ModelState.load_frozen_ref`) loads a second base-only NF4 model in eval/no-grad and pays the VRAM cost only if the user opts in.
 - **Do not catch-and-swallow inside `Controller` or `TrainEngine`**. Those need to surface errors via the queue task's exception so `wait_for` rejects properly. Swallow only in metrics adapters (they're optional side-effects).
 - **Do not do blocking I/O on the asyncio loop.** Inference runs in a thread; training runs in the queue worker; the event loop is for routing and `q.put`. If you need to call into PyTorch from a route, use `loop.run_in_executor` or `asyncio.run_coroutine_threadsafe` like `stream_generate` does.
