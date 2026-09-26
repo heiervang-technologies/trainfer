@@ -1,4 +1,8 @@
-"""Live model state: base_weights ⊕ merged_deltas ⊕ active_lora_adapter.
+"""Live model state: base_weights ⊕ merged_deltas ⊕ active_adapter.
+
+The active adapter is pluggable (``trainfer/adapters.py``): LoRA by default,
+or plain fine-tuning of selected modules. The notes below describe the LoRA
+path, which is the one that needs the residual patch.
 
 The invariant from LIVELEARN §3.1/§6:
   * base is NF4, never modified.
@@ -46,6 +50,8 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
+
+from .adapters import Adapter, LoraAdapter, tag_model
 
 log = logging.getLogger(__name__)
 
@@ -137,9 +143,14 @@ def install() -> None:
 
 @dataclass
 class ModelState:
-    """Owns the live model + tokenizer + LoRA config."""
+    """Owns the live model + tokenizer + adapter.
 
-    model: Any  # FastLanguageModel-wrapped PEFT model
+    What is trainable, how it merges, and how the residual is bound are the
+    adapter's business (``trainfer/adapters.py``). ``merged_deltas`` is the
+    canonical record either way: key -> bf16 CPU delta.
+    """
+
+    model: Any  # FastLanguageModel-wrapped model (PEFT-wrapped for LoRA)
     tokenizer: Any
     base_model_name: str
     lora_rank: int
@@ -155,13 +166,26 @@ class ModelState:
     # calls .generate() or .backward() must hold this lock across the mode flip
     # AND the work that depends on those buffers.
     mode_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
-    # Base-layer forward pre-hook handles (fallback path for disable_adapter).
+    # Base-layer forward hook handles (LoRA fallback path for disable_adapter).
     # Keyed by LoraLayer name; stored so we can remove/rebind without leaking.
     _residual_hook_handles: dict[str, Any] = field(default_factory=dict, repr=False)
     # Optional frozen reference model (base-only, eval, requires_grad=False).
     # When set, objectives consume it as ``pi_ref`` for KL anchoring instead
-    # of falling back to ``model.disable_adapter()`` on the live model.
+    # of falling back to the adapter's reference context on the live model.
     frozen_ref: Any = field(default=None, repr=False)
+    _adapter: Adapter | None = field(default=None, repr=False)
+    max_seq_length: int = 2048
+    load_in_4bit: bool = True
+
+    @property
+    def adapter(self) -> Adapter:
+        # States built via ``ModelState.__new__`` (tests) never ran __init__;
+        # they carry a PEFT-shaped model, so default to LoRA.
+        adapter = self.__dict__.get("_adapter")
+        if adapter is None:
+            adapter = LoraAdapter(rank=self.lora_rank, alpha=self.lora_alpha)
+            self._adapter = adapter
+        return adapter
 
     @classmethod
     def load(
@@ -172,100 +196,73 @@ class ModelState:
         lora_alpha: int = 16,
         lora_dropout: float = 0.0,
         load_in_4bit: bool = True,
+        adapter: Adapter | None = None,
     ) -> "ModelState":
+        """Load the base model and attach ``adapter``.
+
+        ``adapter`` defaults to LoRA built from the ``lora_*`` arguments.
+        """
         # Install the matmul_lora residual patch before Unsloth finishes
         # binding its fast-path references. Idempotent + cached.
         install()
         from unsloth import FastLanguageModel  # heavy import; lazy
 
-        log.info("loading base model %s (4bit=%s)", model_name, load_in_4bit)
+        if adapter is None:
+            adapter = LoraAdapter(
+                rank=lora_rank, alpha=lora_alpha, dropout=lora_dropout
+            )
+        log.info(
+            "loading base model %s (4bit=%s, adapter=%s)",
+            model_name,
+            load_in_4bit,
+            adapter.kind,
+        )
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=model_name,
             max_seq_length=max_seq_length,
             load_in_4bit=load_in_4bit,
             dtype=None,
         )
-        # Qwen3 series: target the standard LoRA attention+MLP set.
-        model = FastLanguageModel.get_peft_model(
-            model,
-            r=lora_rank,
-            target_modules=[
-                "q_proj",
-                "k_proj",
-                "v_proj",
-                "o_proj",
-                "gate_proj",
-                "up_proj",
-                "down_proj",
-            ],
-            lora_alpha=lora_alpha,
-            lora_dropout=lora_dropout,
-            bias="none",
-            use_gradient_checkpointing="unsloth",
-        )
+        model = adapter.attach(model)
+        tag_model(model, adapter)
         return cls(
             model=model,
             tokenizer=tokenizer,
             base_model_name=model_name,
             lora_rank=lora_rank,
             lora_alpha=lora_alpha,
+            _adapter=adapter,
+            max_seq_length=max_seq_length,
+            load_in_4bit=load_in_4bit,
         )
 
     # ------------------------------------------------------------------ adapter ops
     def reset_active_adapter(self) -> None:
-        """Zero the active LoRA matrices. Keeps rank+target intact."""
-        with torch.no_grad():
-            for name, p in self.model.named_parameters():
-                if "lora_A" in name or "lora_B" in name:
-                    p.zero_()
-        log.info("active LoRA adapter zeroed")
+        """Return the active adapter to identity (live == base ⊕ residual)."""
+        self.adapter.reset(self.model)
 
     def extract_active_adapter(self) -> dict[str, torch.Tensor]:
-        """Snapshot the LoRA A/B matrices only (the trainable part)."""
-        out: dict[str, torch.Tensor] = {}
-        for name, p in self.model.named_parameters():
-            if "lora_A" in name or "lora_B" in name:
-                out[name] = p.detach().to("cpu", dtype=torch.bfloat16).clone()
-        return out
+        """Snapshot the trainable part only."""
+        return self.adapter.state_dict(self.model)
 
     def load_active_adapter(self, sd: dict[str, torch.Tensor]) -> None:
-        with torch.no_grad():
-            named = dict(self.model.named_parameters())
-            for name, t in sd.items():
-                if name in named:
-                    named[name].data.copy_(
-                        t.to(named[name].dtype).to(named[name].device)
-                    )
+        self.adapter.load_state_dict(self.model, sd)
 
     # ------------------------------------------------------------------ merge
     def merge_active_into_residual(self) -> None:
-        """Bake the current LoRA into `merged_deltas` (CPU bf16 residual).
+        """Bake the active adapter into `merged_deltas` (CPU bf16 residual).
 
-        We compute Δ = α/r · (B @ A) per LoRA site, accumulate into
-        `merged_deltas`, then zero the active adapter. The *actual* model
-        weights are not touched — this keeps us NF4-base-stable per §6.
-        On next `ModelState.load` (with merged_deltas present) or before a
-        forward pass, callers can apply the residual via `apply_residual()`.
+        The adapter reports its active part as additive per-weight deltas
+        (for LoRA, Δ = scaling · B @ A per site); we accumulate those into
+        `merged_deltas`, reset the adapter to identity, and rebind the
+        residual. The NF4 base is never touched — this keeps it stable per §6.
 
-        Ops keeps it simple: the residual is the canonical record of what has
-        been trained; the in-GPU weights are base + residual + active. After
-        a merge, active is zero, so base + residual == live model.
+        The residual is the canonical record of what has been trained; after
+        a merge the active part is identity, so base ⊕ residual == live model.
         """
-        scale = self.lora_alpha / self.lora_rank
         new_deltas: dict[str, torch.Tensor] = {}
         with torch.no_grad():
-            for name, module in self.model.named_modules():
-                # PEFT LoraLayer exposes lora_A / lora_B as ModuleDicts.
-                if not hasattr(module, "lora_A") or not hasattr(module, "lora_B"):
-                    continue
-                if "default" not in module.lora_A:
-                    continue
-                A = module.lora_A["default"].weight  # (r, in)
-                B = module.lora_B["default"].weight  # (out, r)
-                if A.abs().sum() == 0 and B.abs().sum() == 0:
-                    continue
-                delta = (B @ A).to(torch.float32) * scale  # (out, in)
-                key = f"{name}.weight"
+            for key, delta in self.adapter.delta_weights(self.model).items():
                 prev = self.merged_deltas.get(key)
                 if prev is not None:
                     delta = delta + prev.to(delta.device, dtype=torch.float32)
@@ -275,93 +272,32 @@ class ModelState:
         self.reset_active_adapter()
         self._apply_residual_to_model()
         log.info(
-            "merged %d LoRA sites; total merges=%d",
+            "merged %d %s sites; total merges=%d",
             len(new_deltas),
+            self.adapter.kind,
             self.merges_applied,
         )
 
     # ------------------------------------------------------------------ residual → live
+    def _hooks(self) -> dict[str, Any]:
+        # Tolerates states built via ``__new__`` that never set the field.
+        return self.__dict__.setdefault("_residual_hook_handles", {})
+
     def _clear_residual_from_model(self) -> None:
-        """Remove all residual hooks and _residual_delta attrs from the live model.
+        """Unbind any residual from the live model.
 
         Called when a snapshot with empty merged_deltas is loaded over a model
         that previously had a non-empty residual. Without this, the old
-        forward hooks and _residual_delta bindings leak into the new state,
-        silently corrupting inference. See review finding C-6.
+        bindings leak into the new state, silently corrupting inference.
+        See review finding C-6.
         """
-        for name, handle in list(self._residual_hook_handles.items()):
-            try:
-                handle.remove()
-            except Exception:
-                pass
-        self._residual_hook_handles.clear()
-        for _name, module in self.model.named_modules():
-            if not hasattr(module, "lora_A") or not hasattr(module, "lora_B"):
-                continue
-            base_layer = getattr(module, "base_layer", None)
-            target_w = base_layer.weight if base_layer is not None else None
-            if target_w is not None and hasattr(target_w, "_residual_delta"):
-                try:
-                    del target_w._residual_delta
-                except AttributeError:
-                    pass
-        log.info("cleared residual from live model (hooks + _residual_delta)")
+        self.adapter.clear_residual(self.model, self._hooks())
 
     def _apply_residual_to_model(self) -> None:
-        """Bind the CPU bf16 residual onto each live LoRA site for forward-time use.
-
-        Two channels:
-          (a) ``base_layer.weight._residual_delta = delta_gpu`` — picked up by
-              the patched matmul_lora kernel on every QKV/MLP forward under
-              Unsloth's fast path.
-          (b) ``forward_pre_hook`` on ``base_layer`` that adds
-              ``F.linear(x, delta)`` to the layer's output. Fires under the
-              standard PEFT path (e.g. during ``model.disable_adapter()`` used
-              by the KL anchor in CCPD v2).
-
-        Both channels reference the same delta tensor; if one fires, the other
-        doesn't see the layer at all. Under Unsloth fast path, channel (a) fires
-        and the hook stays idle. Under PEFT-standard, the hook fires and
-        matmul_lora isn't called.
-        """
+        """Make ``merged_deltas`` live at forward time (see the adapter's ``bind_residual``)."""
         if not self.merged_deltas:
             return
-        device = next(self.model.parameters()).device
-        applied = 0
-        for name, module in self.model.named_modules():
-            if not hasattr(module, "lora_A") or not hasattr(module, "lora_B"):
-                continue
-            if "default" not in module.lora_A:
-                continue
-            key = f"{name}.weight"
-            delta_cpu = self.merged_deltas.get(key)
-            if delta_cpu is None:
-                continue
-            delta_gpu = delta_cpu.to(
-                device=device, dtype=torch.bfloat16, non_blocking=True
-            )
-            base_layer = getattr(module, "base_layer", None)
-            target_w = base_layer.weight if base_layer is not None else None
-            if target_w is None:
-                continue
-            # Channel (a): attach to the Parameter directly.
-            target_w._residual_delta = delta_gpu  # type: ignore[attr-defined]
-            # Channel (b): register forward hook (dedup via stored handle).
-            old = self._residual_hook_handles.pop(name, None)
-            if old is not None:
-                try:
-                    old.remove()
-                except Exception:
-                    pass
-            if base_layer is not None:
-                handle = base_layer.register_forward_hook(
-                    _make_residual_forward_hook(delta_gpu)
-                )
-                self._residual_hook_handles[name] = handle
-            applied += 1
-        log.info(
-            "applied residual to %d LoRA sites (matmul_lora + forward_hook)", applied
-        )
+        self.adapter.bind_residual(self.model, self.merged_deltas, self._hooks())
 
     def residual_fingerprint(self) -> str:
         """Deterministic hash of the CPU residual — used by snapshot round-trip tests."""
@@ -378,11 +314,11 @@ class ModelState:
     def load_frozen_ref(self) -> None:
         """Load a second base-only model as the frozen reference for KL anchors.
 
-        The live ``self.model`` carries an active LoRA adapter plus any applied
+        The live ``self.model`` carries the active adapter plus any applied
         residual. A frozen reference held in eval mode with grad disabled gives
         objectives a *stable* anchor point — the session-start policy — rather
-        than the EMA-1 fallback (``model.disable_adapter()``) which anchors to
-        the live merged-deltas state.
+        than the adapter's reference context, which anchors to the live
+        merged-deltas state.
 
         Memory cost: the 4-bit NF4 base weighs roughly 0.4 GB for a 0.6B model
         and ~5 GB for a 7B model. Call from ``Controller.start`` only when
@@ -396,8 +332,8 @@ class ModelState:
         log.info("loading frozen reference (base-only) from %s", self.base_model_name)
         ref_model, _ = FastLanguageModel.from_pretrained(
             model_name=self.base_model_name,
-            max_seq_length=2048,
-            load_in_4bit=True,
+            max_seq_length=self.max_seq_length,
+            load_in_4bit=self.load_in_4bit,
             dtype=None,
         )
         ref_model.eval()
@@ -431,21 +367,3 @@ class ModelState:
             return
         self.merged_deltas = load_file(str(path))
         self._apply_residual_to_model()
-
-
-def _make_residual_forward_hook(delta_gpu: torch.Tensor):
-    """Closure-scoped forward hook adding ``F.linear(x, delta)`` to base_layer output.
-
-    ``delta_gpu`` is pre-cast to the model compute dtype by
-    ``_apply_residual_to_model``; the per-forward .to() only fires on a true
-    mismatch (e.g. a layer in fp16 while the residual is bf16).
-    """
-
-    def _hook(module: Any, inputs: tuple, output: torch.Tensor) -> torch.Tensor:
-        x = inputs[0] if isinstance(inputs, tuple) else inputs
-        delta = delta_gpu
-        if delta.dtype != output.dtype or delta.device != output.device:
-            delta = delta.to(dtype=output.dtype, device=output.device)
-        return output + F.linear(x, delta)
-
-    return _hook

@@ -33,6 +33,7 @@ from typing import Any
 
 import torch
 
+from ..adapters import has_reference, reference_context
 from ._utils import build_chat_inputs, pad_and_stack, sequence_logprob
 
 # Module-level EMA of z0, keyed by (id(model), beta). Keeps single-sample
@@ -59,7 +60,7 @@ def kto_loss(
       * If `pi_ref` is supplied, it is used as π_ref (frozen forward under
         `torch.no_grad()`).
       * Otherwise, with the default `pi_ref_mode="adapter_disabled"`, a second
-        forward runs under `model.disable_adapter()` — base-only log-probs on
+        forward runs under `reference_context(model)` — base-only log-probs on
         the same weights, zero extra memory. Same pattern as `kl_anchor_loss`
         and `ccpd_v2_loss`.
       * Only when `pi_ref` is None AND `pi_ref_mode` is disabled does KTO fall
@@ -90,9 +91,7 @@ def kto_loss(
     policy_logprob_per_tok = summed / n_tokens  # (B,)
 
     use_self_ref = (
-        pi_ref is None
-        and pi_ref_mode == "adapter_disabled"
-        and hasattr(model, "disable_adapter")
+        pi_ref is None and pi_ref_mode == "adapter_disabled" and has_reference(model)
     )
     if pi_ref is not None:
         with torch.no_grad():
@@ -102,7 +101,7 @@ def kto_loss(
         ref_logprob_per_tok = ref_summed / n_tokens
         ref_mode = "external"
     elif use_self_ref:
-        with torch.no_grad(), model.disable_adapter():
+        with torch.no_grad(), reference_context(model):
             ref_summed = sequence_logprob(
                 model, batch["input_ids"], batch["labels"], batch["attention_mask"]
             )

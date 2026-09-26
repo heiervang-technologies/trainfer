@@ -23,6 +23,27 @@ def parse_cli_args(argv: list[str] | None = None) -> ServeConfig:
     p.add_argument("--data-dir", type=pathlib.Path, default=cfg.data_dir)
     p.add_argument("--max-seq-length", type=int, default=cfg.max_seq_length)
     p.add_argument("--lora-rank", type=int, default=cfg.lora_rank)
+    p.add_argument("--lora-alpha", type=int, default=cfg.lora_alpha)
+    p.add_argument("--adapter", choices=("lora", "module_sft"), default=cfg.adapter)
+    p.add_argument(
+        "--lora-target-modules",
+        nargs="+",
+        default=cfg.lora_target_modules,
+        metavar="NAME",
+    )
+    p.add_argument(
+        "--rslora",
+        dest="lora_use_rslora",
+        action="store_true",
+        default=cfg.lora_use_rslora,
+    )
+    p.add_argument(
+        "--trainable-modules",
+        nargs="+",
+        default=cfg.trainable_modules,
+        metavar="PATTERN",
+        help="module_sft: fnmatch patterns over module names",
+    )
     p.add_argument(
         "--no-4bit", dest="load_in_4bit", action="store_false", default=cfg.load_in_4bit
     )
@@ -42,6 +63,11 @@ def parse_cli_args(argv: list[str] | None = None) -> ServeConfig:
     cfg.data_dir = args.data_dir
     cfg.max_seq_length = args.max_seq_length
     cfg.lora_rank = args.lora_rank
+    cfg.lora_alpha = args.lora_alpha
+    cfg.adapter = args.adapter
+    cfg.lora_target_modules = list(args.lora_target_modules)
+    cfg.lora_use_rslora = args.lora_use_rslora
+    cfg.trainable_modules = list(args.trainable_modules)
     cfg.load_in_4bit = args.load_in_4bit
     cfg.idle_replay = args.idle_replay
     cfg.frozen_ref = args.frozen_ref

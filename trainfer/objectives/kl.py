@@ -27,9 +27,13 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from ..adapters import has_reference, reference_context
 from ._utils import _to_int_list
 
-def chunked_kl_div(input_logits: torch.Tensor, target_logits: torch.Tensor, chunk_size: int = 128) -> torch.Tensor:
+
+def chunked_kl_div(
+    input_logits: torch.Tensor, target_logits: torch.Tensor, chunk_size: int = 128
+) -> torch.Tensor:
     """
     Computes KL(target || input) over the last dimension, chunking over the flattened
     preceding dimensions to save memory (avoiding full V-sized log_softmax allocation).
@@ -37,24 +41,26 @@ def chunked_kl_div(input_logits: torch.Tensor, target_logits: torch.Tensor, chun
     assert input_logits.shape == target_logits.shape
     orig_shape = input_logits.shape
     V = orig_shape[-1]
-    
+
     inp_flat = input_logits.view(-1, V)
     tgt_flat = target_logits.view(-1, V)
     L = inp_flat.shape[0]
-    
+
     kl_out = torch.empty(L, device=input_logits.device, dtype=torch.float32)
-    
+
     for start_idx in range(0, L, chunk_size):
         end_idx = min(start_idx + chunk_size, L)
         inp_chunk = inp_flat[start_idx:end_idx].float()
         tgt_chunk = tgt_flat[start_idx:end_idx].float()
-        
+
         log_inp = F.log_softmax(inp_chunk, dim=-1)
         log_tgt = F.log_softmax(tgt_chunk, dim=-1)
-        
-        chunk_kl = F.kl_div(log_inp, log_tgt, reduction="none", log_target=True).sum(dim=-1)
+
+        chunk_kl = F.kl_div(log_inp, log_tgt, reduction="none", log_target=True).sum(
+            dim=-1
+        )
         kl_out[start_idx:end_idx] = chunk_kl
-        
+
     return kl_out.view(orig_shape[:-1])
 
 
@@ -214,7 +220,7 @@ def _target_position_kl(
     ).logits  # (B,T,V)
     with torch.no_grad():
         if use_self_ref:
-            with model.disable_adapter():
+            with reference_context(model):
                 ref_logits = model(
                     input_ids=input_ids, attention_mask=attn, use_cache=False
                 ).logits
@@ -277,9 +283,7 @@ def kl_anchor_loss(
     # the same model (standard PEFT context manager). Only bail out to a no-op
     # zero loss when neither route is available.
     use_self_ref = (
-        pi_ref is None
-        and pi_ref_mode == "adapter_disabled"
-        and hasattr(model, "disable_adapter")
+        pi_ref is None and pi_ref_mode == "adapter_disabled" and has_reference(model)
     )
     if pi_ref is None and not use_self_ref:
         zero = torch.zeros(
@@ -318,7 +322,7 @@ def kl_anchor_loss(
     logits = model(**tok).logits  # (B, T, V)
     with torch.no_grad():
         if use_self_ref:
-            with model.disable_adapter():
+            with reference_context(model):
                 ref_logits = model(**tok).logits
         else:
             ref_logits = pi_ref(**tok).logits  # type: ignore

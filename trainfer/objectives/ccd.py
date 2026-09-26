@@ -11,6 +11,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from ..adapters import has_reference, reference_context
 from ._utils import _to_int_list, pad_and_stack
 
 
@@ -38,8 +39,10 @@ def ccd_loss(
     if not samples:
         raise ValueError("ccd_loss requires at least one sample")
 
-    if not hasattr(model, "disable_adapter"):
-        raise ValueError("ccd_loss requires a model with disable_adapter() (e.g. PEFT)")
+    if not has_reference(model):
+        raise ValueError(
+            "ccd_loss requires a model with a reference context (a trainfer adapter or PEFT)"
+        )
 
     if hidden_layers is None:
         hidden_layers = [-1, -2, -3, -4]
@@ -127,7 +130,7 @@ def ccd_loss(
     # 2. Forward passes
     # Teacher forward (no grad)
     with torch.no_grad():
-        with model.disable_adapter():
+        with reference_context(model):
             t_out = model(
                 input_ids=t_ids,
                 attention_mask=t_mask,
@@ -209,6 +212,7 @@ def ccd_loss(
             start_t = 0
 
         from .kl import chunked_kl_div
+
         t_chunk = t_logits[i, start_t : L_t - 1]
         s_chunk = s_logits[i, 0 : L_s - 1]
         kl_per_token = chunked_kl_div(input_logits=s_chunk, target_logits=t_chunk)

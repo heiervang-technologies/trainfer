@@ -15,6 +15,30 @@ class ServeConfig:
     lora_dropout: float = 0.0
     load_in_4bit: bool = True
 
+    # --- adapter -----------------------------------------------------------
+    # What is trainable on the live model. See ``trainfer/adapters.py``.
+    #   "lora"        PEFT LoRA on ``lora_target_modules`` (default).
+    #   "module_sft"  plain fine-tuning of every parameter under modules whose
+    #                 names match a ``trainable_modules`` fnmatch pattern, e.g.
+    #                 ["model.norm", "*.post_attention_layernorm", "lm_head"].
+    #                 Quantized (4-bit) weights cannot be trained; target
+    #                 non-quantized modules or set ``load_in_4bit=False``.
+    adapter: str = "lora"
+    lora_target_modules: list[str] = field(
+        default_factory=lambda: [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ]
+    )
+    lora_use_rslora: bool = False
+    lora_init: str = "default"  # "default" (kaiming A, zero B) | "gaussian"
+    trainable_modules: list[str] = field(default_factory=list)
+
     host: str = "127.0.0.1"
     port: int = 8000
 

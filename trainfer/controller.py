@@ -17,6 +17,7 @@ import time
 from typing import Any
 
 
+from .adapters import adapter_from_config, reference_context
 from .commit_stream import CommitBroadcaster
 from .config import ServeConfig
 from .engine.replay import IdleReplayScheduler, ReplayPolicy
@@ -94,6 +95,7 @@ class Controller:
             lora_alpha=self.cfg.lora_alpha,
             lora_dropout=self.cfg.lora_dropout,
             load_in_4bit=self.cfg.load_in_4bit,
+            adapter=adapter_from_config(self.cfg),
         )
         if self.cfg.frozen_ref:
             self.state.load_frozen_ref()
@@ -111,6 +113,7 @@ class Controller:
         self.metrics_logger.log_params(
             {
                 "model": self.cfg.model,
+                "adapter": self.cfg.adapter,
                 "lora_rank": self.cfg.lora_rank,
                 "lora_alpha": self.cfg.lora_alpha,
                 "default_lr": self.cfg.default_lr,
@@ -267,6 +270,8 @@ class Controller:
             return {"loss": result.get("loss"), "components": components, "wall": wall}
         elif kind == "merge":
             self.state.merge_active_into_residual()
+            # The adapter was re-initialized; Adam m/v belong to the old one.
+            self.train_engine.reset_optimizer()
             return {
                 "merges_applied": self.state.merges_applied,
                 "residual_fp": self.state.residual_fingerprint(),
@@ -317,6 +322,7 @@ class Controller:
             return {"fraction": frac, "matched": matched, "total": total, "wall": wall}
         elif kind == "reset_adapter":
             self.state.reset_active_adapter()
+            self.train_engine.reset_optimizer()
             return {"ok": True, "wall": time.time() - t0}
         else:
             raise ValueError(f"unknown task kind {kind!r}")
@@ -347,11 +353,14 @@ class Controller:
         model = self.state.model
 
         def _run() -> str:
-            # `disable_adapter()` is only present on PEFT-wrapped models; the
-            # base-only path (e.g. smoke tests with a raw HF model) doesn't
-            # have it, so we degrade gracefully.
-            if not use_adapter and hasattr(model, "disable_adapter"):
-                with model.disable_adapter():
+            # Models without a reference context (e.g. smoke tests with a raw
+            # HF model) degrade gracefully to the live model. The mode lock is
+            # taken *before* entering the context: disabling the adapter (or
+            # swapping module_sft weights) under a running train step would
+            # corrupt it.
+            ref = None if use_adapter else reference_context(model)
+            if ref is not None:
+                with self.state.mode_lock, ref:
                     return generate_chat(
                         model,
                         self.state.tokenizer,
@@ -420,16 +429,17 @@ class Controller:
         model = self.state.model
 
         def _producer():
-            # Wrap in `disable_adapter()` when the caller asked for the base
-            # model. The context manager's __exit__ re-enables the adapter
-            # after the generator drains, so concurrent training on the
-            # PEFT model is unaffected.
-            if not use_adapter and hasattr(model, "disable_adapter"):
-                ctx = model.disable_adapter()
+            # Run as the reference policy when the caller asked for the base
+            # model. The mode lock is held across the context so training
+            # never runs while the adapter is disabled; __exit__ re-enables it
+            # after the generator drains.
+            ref = None if use_adapter else reference_context(model)
+            if ref is None:
+                lock, ref = contextlib.nullcontext(), contextlib.nullcontext()
             else:
-                ctx = contextlib.nullcontext()
+                lock = self.state.mode_lock
             try:
-                with ctx:
+                with lock, ref:
                     for chunk in generate_chat_stream(
                         model,
                         self.state.tokenizer,
