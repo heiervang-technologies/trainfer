@@ -14,13 +14,18 @@ tests/test_queue_cursor.py is written to fail under reordering.
 from __future__ import annotations
 
 import asyncio
+import collections
+import inspect
 import logging
 import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .errors import ShutdownDroppedError, ShuttingDownError, QueueFullError
+from .errors import (
+    CommitExpiredError, TaskFailedError, ShutdownDroppedError,
+    ShuttingDownError, QueueFullError,
+)
 
 log = logging.getLogger(__name__)
 
@@ -44,18 +49,27 @@ class QueueTask:
 class ComputeQueue:
     """Single-writer async queue with a monotonic commit cursor.
 
-    The cursor advances *only when a task completes successfully*. Failures
-    advance it too (the task is "done"), but the task's `error` is set and
+    The cursor advances when a task finishes, including failures. The task's
+    `error` must be checked before treating completion as a successful update;
     readers can inspect it — a failed train step still has a deterministic
     ordering with respect to subsequent inference.
     """
 
-    def __init__(self, max_depth: int = 64) -> None:
+    def __init__(self, max_depth: int = 64, outcome_history: int = 1024) -> None:
+        if max_depth < 1 or outcome_history < 1:
+            raise ValueError("queue depth and outcome history must be positive")
         self._q: asyncio.Queue[QueueTask] = asyncio.Queue(maxsize=max_depth)
         self._next_token: int = 0
         self._completed_token: int = -1
         # Maps token -> completion event. Kept small by GC after wait_for.
         self._pending: dict[int, QueueTask] = {}
+        # Metadata only: never retain payloads, GPU results, or tracebacks here.
+        self._outcomes: collections.OrderedDict[int, QueueTask] = collections.OrderedDict()
+        self._outcome_history = outcome_history
+        self._batch_remaining: dict[str, int] = {}
+        self._batch_failed: set[str] = set()
+        self._active: QueueTask | None = None
+        self._finished_tokens: set[int] = set()
         self._cursor_advanced = asyncio.Condition()
         self._worker_task: asyncio.Task | None = None
         self._stop = asyncio.Event()
@@ -80,18 +94,27 @@ class ComputeQueue:
             )
         return await self.submit(kind, payload, batch_id)
 
-    async def submit(self, kind: str, payload: Any, batch_id: str = "") -> QueueTask:
+    async def submit_many(self, kind: str, payloads: list[Any], batch_id: str = "") -> list[QueueTask]:
+        """Admit an entire batch or none; no suspension between check and enqueue."""
         if not self._accepting:
-            raise ShuttingDownError(
-                "queue is draining; new submits rejected until restart",
-            )
-        token = self._next_token
-        self._next_token += 1
-        task = QueueTask(token=token, kind=kind, payload=payload, batch_id=batch_id)
-        self._pending[token] = task
-        self._last_enqueue_ts = time.monotonic()
-        await self._q.put(task)
-        return task
+            raise ShuttingDownError("queue is draining")
+        if len(payloads) > self.maxsize - self.qsize():
+            raise QueueFullError("insufficient queue capacity for the entire batch")
+        if batch_id and payloads:
+            self._batch_remaining[batch_id] = self._batch_remaining.get(batch_id, 0) + len(payloads)
+        tasks = []
+        for payload in payloads:
+            task = QueueTask(self._next_token, kind, payload, batch_id=batch_id)
+            self._next_token += 1
+            self._pending[task.token] = task
+            self._q.put_nowait(task)
+            tasks.append(task)
+        if tasks:
+            self._last_enqueue_ts = time.monotonic()
+        return tasks
+
+    async def submit(self, kind: str, payload: Any, batch_id: str = "") -> QueueTask:
+        return (await self.submit_many(kind, [payload], batch_id))[0]
 
     # ------------------------------------------------------------------ idleness
     def is_idle_for(self, seconds: float) -> bool:
@@ -123,12 +146,14 @@ class ComputeQueue:
         """Block until the committed cursor >= token."""
         if isinstance(task_or_token, int):
             token = task_or_token
-            task = self._pending.get(token)
-            if task is None and token <= self._completed_token:
-                # Already completed and GC'd; that's a valid "seen" state.
-                return QueueTask(token=token, kind="n/a", payload=None)
-            if task is None:
+            if token < 0 or token >= self._next_token:
                 raise KeyError(f"unknown token {token}")
+            task = self._pending.get(token)
+            if task is None:
+                task = self._outcomes.get(token)
+                if task is None:
+                    raise CommitExpiredError(f"outcome for commit token {token} has expired")
+                return task
         else:
             task = task_or_token
         if timeout is None:
@@ -137,14 +162,49 @@ class ComputeQueue:
             await asyncio.wait_for(task.done.wait(), timeout=timeout)
         return task
 
+    def _remember_outcome(self, task: QueueTask) -> None:
+        outcome = QueueTask(task.token, task.kind, None, batch_id=task.batch_id)
+        if task.error is not None:
+            # Preserve structured shutdown failures but strip the traceback and
+            # arbitrary exception internals from the bounded historical record.
+            if isinstance(task.error, ShutdownDroppedError):
+                outcome.error = ShutdownDroppedError(str(task.error))
+            else:
+                outcome.error = TaskFailedError(f"queue task {task.token} failed")
+        outcome.done.set()
+        self._outcomes[task.token] = outcome
+        while len(self._outcomes) > self._outcome_history:
+            self._outcomes.popitem(last=False)
+
+    def _finish(self, task: QueueTask) -> None:
+        if task.batch_id in self._batch_remaining:
+            if task.error is not None:
+                self._batch_failed.add(task.batch_id)
+            self._batch_remaining[task.batch_id] -= 1
+            if self._batch_remaining[task.batch_id] == 0:
+                if task.batch_id in self._batch_failed and task.error is None:
+                    task.error = TaskFailedError("another task in this batch failed")
+                self._batch_failed.discard(task.batch_id)
+                del self._batch_remaining[task.batch_id]
+        self._finished_tokens.add(task.token)
+        while self._completed_token + 1 in self._finished_tokens:
+            self._completed_token += 1
+            self._finished_tokens.remove(self._completed_token)
+        task.done.set()
+        self._remember_outcome(task)
+        self._pending.pop(task.token, None)
+
     # ------------------------------------------------------------------ worker
-    async def start(self, handler: Callable[[QueueTask], Any]) -> None:
+    async def start(
+        self, handler: Callable[[QueueTask], Any],
+        on_complete: Callable[[QueueTask], None] | None = None,
+    ) -> None:
         """Start the single worker task. `handler` is a coroutine-or-callable."""
         if self._worker_task is not None:
             raise RuntimeError("queue already started")
-        self._worker_task = asyncio.create_task(self._run(handler))
+        self._worker_task = asyncio.create_task(self._run(handler, on_complete))
 
-    async def _run(self, handler: Callable[[QueueTask], Any]) -> None:
+    async def _run(self, handler, on_complete=None) -> None:
         log.info("compute queue worker started")
         while True:
             # Drain-on-stop: exit only when stop is requested AND the queue
@@ -158,8 +218,13 @@ class ComputeQueue:
                 task = await asyncio.wait_for(self._q.get(), timeout=0.1)
             except asyncio.TimeoutError:
                 continue
+            self._active = task
             try:
-                result = handler(task)
+                # Synchronous model work must never block the HTTP event loop.
+                result = (
+                    handler(task) if inspect.iscoroutinefunction(handler)
+                    else await asyncio.to_thread(handler, task)
+                )
                 if asyncio.iscoroutine(result):
                     result = await result
                 task.result = result
@@ -168,18 +233,17 @@ class ComputeQueue:
                 task.error = e
             finally:
                 async with self._cursor_advanced:
-                    # Cursor strictly monotone; cover out-of-order completions
-                    # defensively even though our worker is single-threaded.
-                    if task.token > self._completed_token:
-                        self._completed_token = task.token
-                    task.done.set()
+                    self._finish(task)
+                    self._active = None
                     self._cursor_advanced.notify_all()
-                    # GC: drop once cursor has passed.
-                    for t in list(self._pending.keys()):
-                        if t <= self._completed_token:
-                            self._pending.pop(t, None)
+                    if on_complete is not None:
+                        try:
+                            on_complete(task)
+                        except Exception:
+                            log.exception("completion notification failed for task %d", task.token)
 
     async def stop(self) -> None:
+        self._accepting = False
         self._stop.set()
         if self._worker_task is not None:
             await self._worker_task
@@ -243,33 +307,26 @@ class ComputeQueue:
                 # In-flight task is genuinely stuck; best we can do is move
                 # on and let the process teardown handle it.
                 pass
-        self._worker_task = None
+        if self._worker_task.done():
+            self._worker_task = None
         return await self._reap_pending(timed_out=timed_out)
 
     async def _reap_pending(self, *, timed_out: bool) -> dict[str, Any]:
-        """Fire ``done`` on every still-pending task with ShutdownDroppedError.
-
-        Advances ``_completed_token`` over the dropped range so any reader
-        that consults the cursor after drain sees monotone progress.
-        """
+        """Drop unstarted work; never label a still-mutating task completed."""
         dropped = 0
         async with self._cursor_advanced:
             for task in list(self._pending.values()):
-                if task.done.is_set():
+                if task.done.is_set() or task is self._active:
                     continue
                 task.error = ShutdownDroppedError(
                     f"queue task {task.token} ({task.kind}) dropped on shutdown",
                 )
-                if task.token > self._completed_token:
-                    self._completed_token = task.token
-                task.done.set()
+                self._finish(task)
                 dropped += 1
             self._cursor_advanced.notify_all()
-            # GC: we've resolved every pending task one way or another.
-            for t in list(self._pending.keys()):
-                if t <= self._completed_token:
-                    self._pending.pop(t, None)
-        return {"dropped": dropped, "timed_out": timed_out}
+            while not self._q.empty():
+                self._q.get_nowait()
+        return {"dropped": dropped, "timed_out": timed_out, "in_flight": self._active is not None}
 
 
 def new_batch_id() -> str:

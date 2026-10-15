@@ -14,12 +14,23 @@ class ServeConfig:
     lora_alpha: int = 16
     lora_dropout: float = 0.0
     load_in_4bit: bool = True
+    lora_target_modules: list[str] = field(default_factory=lambda: [
+        "q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj",
+    ])
+    gradient_checkpointing: str = "unsloth"  # unsloth | standard | off
+    model_dtype: str = "auto"  # auto | bfloat16 | float32
+    memory_reserve_bytes: int = 256 * 1024**2
+    training_workspace_bytes: int = 0  # Caller-calibrated activation/backward budget.
+    inference_workspace_bytes: int = 0  # Additional prefill/logits/backend budget, beyond estimated KV.
 
     host: str = "127.0.0.1"
     port: int = 8000
 
     data_dir: Path = field(default_factory=lambda: Path("./trainfer_data"))
     max_queue_depth: int = 64
+    # Maximum consecutive inference operations while an update is waiting.
+    # Scheduling boundaries are whole generations/steps, not individual tokens.
+    inference_burst: int = 4
     max_samples_per_train_call: int = 256
     rate_limit_train_rps: float | None = None
     rate_limit_feedback_rps: float | None = None
@@ -117,6 +128,7 @@ class ServeConfig:
 
     # Optimizer class: "adamw8bit" (default) or "lion8bit".
     optimizer: str = "adamw8bit"
+    optimizer_kwargs: dict = field(default_factory=dict)
 
     # --- /v1/commits/stream SSE -------------------------------------------
     # Per-commit event stream, one event per successful train-task cursor
@@ -142,6 +154,7 @@ class ServeConfig:
     autosave_on_exit: bool = True
     autoload_on_boot: bool = True
     autosave_snapshot_name: str = "_autosave"
+    autosave_training_state: bool = False
 
     # --- safety_monitor daemon-global watchlist ---------------------------
     # Three-tier union at step time: this daemon-global floor

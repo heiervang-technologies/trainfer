@@ -23,6 +23,8 @@ import ast
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 
 def _missing(*modules: str) -> bool:
     return any(importlib.util.find_spec(m) is None for m in modules)
@@ -33,6 +35,7 @@ collect_ignore_glob: list[str] = []
 # Files that can be imported on a torchless runner. Everything else in
 # ``trainfer/tests/`` will be skipped at collection time when torch is absent.
 _TORCHLESS_OK = {
+    "test_scheduling.py",  # model scheduling is pure threading
     "test_errors.py",  # lazy trainfer.errors import inside tests
     "test_error_middleware.py",  # same; also uses FastAPI/TestClient
     "test_logging_backends.py",  # trainfer.logging_backends is lazy on heavy deps
@@ -109,7 +112,7 @@ def _cpu_only_whitelist_violations(tests_dir: Path, whitelist: set[str]) -> list
         mod = importlib.util.module_from_spec(spec)
         try:
             spec.loader.exec_module(mod)
-        except ImportError:
+        except (ImportError, pytest.skip.Exception):
             # Heavy-dep file; filtering it out is correct behavior.
             continue
         except Exception:

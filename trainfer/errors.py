@@ -32,6 +32,9 @@ ERROR_CODES: frozenset[str] = frozenset(
         "shutting_down",
         "shutdown_dropped",
         "timeout",
+        "commit_expired",
+        "task_failed",
+        "memory_admission",
         "internal",
     }
 )
@@ -54,6 +57,12 @@ class InvalidInputError(TrainferError):
     code = "invalid_input"
     status_code = 400
     retryable = False
+
+
+class MemoryAdmissionError(TrainferError):
+    code = "memory_admission"
+    status_code = 503
+    retryable = True
 
 
 class UnknownObjectiveError(TrainferError):
@@ -109,6 +118,20 @@ class TimeoutError(TrainferError):  # noqa: A001 — intentional shadow within t
     code = "timeout"
     status_code = 504
     retryable = True
+
+
+class CommitExpiredError(TrainferError):
+    code = "commit_expired"
+    status_code = 410
+
+
+class TaskFailedError(TrainferError):
+    code = "task_failed"
+    status_code = 409
+
+
+class TrainferMatmulRebindError(TrainferError):
+    """The backend cannot honor trainfer's residual-forward contract."""
 
 
 def envelope_payload(

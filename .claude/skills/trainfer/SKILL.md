@@ -27,7 +27,7 @@ Corollaries:
 | `trainfer/server.py` | FastAPI routes (`/v1/chat/completions`, `/v1/train`, `/v1/feedback`, `/v1/state/*`, `/v1/wait`, `/health`). OpenAI-compatible SSE. Thin — delegates to `Controller`. |
 | `trainfer/controller.py` | The orchestrator. `generate`, `stream_generate`, `submit_train`, `submit_feedback`, `request_merge`, snapshot save/load. Holds the queue, trajectory, and state. |
 | `trainfer/queue.py` | `ComputeQueue` — single-worker FIFO with monotone `commit_cursor`. `wait_for(token)` is the "POST a batch, next inference sees it" guarantee. |
-| `trainfer/state.py` | `ModelState` — the model, tokenizer, `mode_lock`, `merged_deltas` residual, and the **module-level monkey-patch on `unsloth.kernels.utils.matmul_lora`** that applies `_residual_delta` at forward time. |
+| `trainfer/state.py` | `ModelState` — the model, tokenizer, `mode_lock`, `merged_deltas` residual, and the **module-level patches on `unsloth.kernels.utils.matmul_lora` and `fast_linear_forward`** that applies `_residual_delta` at forward time. |
 | `trainfer/engine/train.py` | `TrainEngine.step` — composes registered objectives, runs forward+backward, updates LoRA, returns `{loss, components}`. |
 | `trainfer/engine/inference.py` | `generate_chat` / `generate_chat_stream` — uses HF `TextIteratorStreamer`; holds `mode_lock` across the Unsloth mode flip and the entire generate. |
 | `trainfer/engine/replay.py` | `IdleReplayScheduler` — optional background re-training from the trajectory when the queue is idle. |
@@ -39,11 +39,11 @@ Corollaries:
 
 ## The concepts you must hold in your head
 
-**Residual delta.** Upstream Unsloth bypasses both `LoraLayer.forward` and `base_layer.forward` on Qwen3's fast path, so `register_forward_hook` silently never fires. We intercept the single funnel `unsloth.kernels.utils.matmul_lora` via a module-level monkey-patch installed at import of `trainfer/state.py`. The patch looks for `W._residual_delta` (a bf16 GPU tensor bound as an attribute of the Parameter) and adds `F.linear(X, delta)` to the output. Binding by attribute survives Unsloth's mode flips — `id(W)` stays stable across `for_training` / `for_inference`. Do not replace this with a `dict[id(W), delta]` lookup; that was tried and broke on mode flip.
+**Residual delta.** Upstream Unsloth bypasses both `LoraLayer.forward` and `base_layer.forward` on Qwen3's fast path, so `register_forward_hook` silently never fires. We intercept `unsloth.kernels.utils.matmul_lora` for prefill/training and `fast_linear_forward` for single-token cached decoding via module-level patches installed at import of `trainfer/state.py`. The latter bypasses the matmul path; each path must add the residual exactly once. Adapter reset/restore also invalidate cached `_fast_lora` casts. The patch looks for `W._residual_delta` (a bf16 GPU tensor bound as an attribute of the Parameter) and adds `F.linear(X, delta)` to the output. Binding by attribute survives Unsloth's mode flips — `id(W)` stays stable across `for_training` / `for_inference`. Do not replace this with a `dict[id(W), delta]` lookup; that was tried and broke on mode flip.
 
 **Commit cursor.** Monotone integer, single writer (the queue worker), read by inference dispatch. Every `/v1/train` request is chunked into queue tasks; the last task's token is returned as `commit_token`. Clients pass it back as `after_commit_token` on their next chat call; the controller awaits `queue.wait_for(token)` before generating. `test_concurrent_load.py` pins the invariant under contention — keep it green.
 
-**Compute queue.** FIFO, single worker, bounded by `cfg.max_queue_depth`. Staleness is bounded by the depth cap, not by a guardrail check. Training tasks block inference only for the forward+backward window — the queue is there to hide that cost.
+**Compute queue.** FIFO, single worker, bounded by `cfg.max_queue_depth`. Staleness is bounded by the depth cap, not by a guardrail check. Updates hold the model lock for their entire operation, including optimizer steps; custom procedures hold it across all internal steps. Inference waits at these operation boundaries.
 
 **Trajectory as source of truth.** `trainfer_data/trajectory.jsonl` is canonical. Metrics backends in `logging_backends.py` are optional *mirrors* that must never raise into the hot path — catch-and-log inside every adapter method.
 
@@ -105,7 +105,7 @@ Use `uv`, never `pip`. Every test under `trainfer/tests/` that has `test_` prefi
 
 ## Gotchas the tests already guard against
 
-- **4-bit merge path** (`test_merge_and_e2e.py`): merging requantized deltas back into NF4 silently degrades. The ship path keeps `merged_deltas` as bf16 and applies as a forward-time residual. Idempotent null merge is pinned.
+- **4-bit merge path** (`test_merge_and_e2e.py`): merging requantized deltas back into NF4 silently degrades. The default path keeps `merged_deltas` as bf16 and applies as a forward-time residual. Opt-in `cpu_requantize` stages packed base changes on CPU/disk with explicit error preview and rejection gates; see OPERATING.md. Idempotent null merge is pinned.
 - **Residual live at forward time** (`test_residual_live_path.py`): after `merge_active_into_residual()` zeroes the active adapter, the forward stays within 0.05 nats of the pre-merge trained-adapter forward — not an ~86-nat gap. If this test regresses, the monkey-patch bind site is wrong.
 - **T3.1 span_prefix mask geometry** (`test_span_prefix.py`): token boundary between kept prefix and regenerated suffix is resolved by walking token slices and checking `tokenizer.decode(...).endswith(span_prefix)`. A naive tokenize-then-LCP approach misaligns on Qwen3's auto `<think>` block; don't simplify it.
 - **Concurrent train+infer** (`test_concurrent_load.py`): 10+10 under contention, all DESIGN invariants hold. If a refactor trips this, the mode_lock, queue worker, or commit-cursor read path got shaken.

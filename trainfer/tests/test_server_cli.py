@@ -55,3 +55,38 @@ def test_toggle_flags():
     assert cfg.load_in_4bit is False
     assert cfg.idle_replay is True
     assert cfg.frozen_ref is True
+
+
+def test_memory_and_adapter_controls():
+    from trainfer.cli import parse_cli_args
+
+    cfg = parse_cli_args(["--lora-rank", "4", "--lora-alpha", "8", "--lora-dropout", "0.1",
+                          "--lora-target-modules", "q_proj", "v_proj",
+                          "--gradient-checkpointing", "standard", "--model-dtype", "bfloat16",
+                          "--memory-reserve-mib", "128", "--training-workspace-mib", "512"])
+    assert (cfg.lora_rank, cfg.lora_alpha, cfg.lora_dropout) == (4, 8, 0.1)
+    assert cfg.lora_target_modules == ["q_proj", "v_proj"]
+    assert cfg.gradient_checkpointing == "standard"
+    assert cfg.model_dtype == "bfloat16"
+    assert cfg.memory_reserve_bytes == 128 * 1024**2
+    assert cfg.training_workspace_bytes == 512 * 1024**2
+
+
+def test_optimizer_name_and_options_are_passed_without_importing_plugins():
+    from trainfer.cli import parse_cli_args
+
+    cfg = parse_cli_args(["--optimizer", "installed_plugin", "--optimizer-kwargs", '{"momentum":0.9}'])
+    assert cfg.optimizer == "installed_plugin"
+    assert cfg.optimizer_kwargs == {"momentum": 0.9}
+    with pytest.raises(SystemExit):
+        parse_cli_args(["--optimizer-kwargs", "[]"])
+
+
+@pytest.mark.parametrize("args", [["--lora-rank", "0"], ["--lora-alpha", "0"],
+                                  ["--lora-dropout", "1"], ["--memory-reserve-mib", "-1"],
+                                  ["--training-workspace-mib", "-1"]])
+def test_invalid_memory_and_adapter_controls_reject(args):
+    from trainfer.cli import parse_cli_args
+
+    with pytest.raises(SystemExit):
+        parse_cli_args(args)

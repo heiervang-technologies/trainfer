@@ -58,11 +58,10 @@ class CommitBroadcaster:
         components: dict[str, Any],
         batch_size: int,
     ) -> None:
-        """Fan-out a commit event. Must be called synchronously from the
-        queue worker — ``put_nowait`` only *schedules* wakeups, so subscribers
-        cannot resume until after the queue's finally block advances the
-        commit cursor. That is what preserves the ``cursor=N in event ⇒
-        committed >= N`` invariant.
+        """Fan-out a commit event on the event loop, after cursor advancement.
+
+        The queue's completion callback owns publication. GPU handlers run in
+        a thread and must not touch these asyncio queues.
         """
         if not self.enabled or not self._subscribers:
             return

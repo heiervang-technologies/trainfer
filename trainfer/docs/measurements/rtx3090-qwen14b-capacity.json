@@ -1,0 +1,130 @@
+{
+  "checkpoint": "/run/media/me/storage/builds/trainfer/hf-cache/hub/models--unsloth--Qwen3-14B-unsloth-bnb-4bit/snapshots/46105e245750aad3be7fd1d81c21cb03a0e438ed",
+  "revision": "46105e245750aad3be7fd1d81c21cb03a0e438ed",
+  "gpu_before": "NVIDIA GeForce RTX 3090, 24576, 7868, 16249",
+  "load_seconds": 15.199551194004016,
+  "load_peak_allocated_bytes": 11292167680,
+  "loaded_allocated_bytes": 11291971072,
+  "trainable_parameters": 32112640,
+  "rank": 8,
+  "alpha": 16,
+  "max_seq_length": 1024,
+  "samples_per_update": 4,
+  "microbatch_size": 1,
+  "phases": [
+    {
+      "phase": "train",
+      "seconds": 8.117032719004783,
+      "peak_allocated_bytes": 12340082688,
+      "peak_reserved_bytes": 12593397760,
+      "admission": {
+        "device": "cuda:0",
+        "total_bytes": 25286737920,
+        "free_bytes": 5819990016,
+        "allocated_bytes": 11291971072,
+        "reserved_bytes": 11330912256,
+        "available_bytes": 5858931200,
+        "operation": "train",
+        "basis": "gradient + optimizer state + configured activation workspace",
+        "required_bytes": 1268568064,
+        "reserve_bytes": 1073741824,
+        "admitted": true,
+        "gradient_bytes": 128450560,
+        "new_optimizer_bytes": 66375680,
+        "workspace_bytes": 1073741824,
+        "activation_estimate_supplied": true,
+        "optimizer_estimate_available": true
+      },
+      "loss": 0.2841368317604065,
+      "gradient_norm": 0.26267319917678833
+    },
+    {
+      "phase": "infer",
+      "seconds": 0.7680560019944096,
+      "peak_allocated_bytes": 11829072384,
+      "peak_reserved_bytes": 12664700928,
+      "admission": {
+        "device": "cuda:0",
+        "total_bytes": 25286737920,
+        "free_bytes": 4581687296,
+        "allocated_bytes": 11667836416,
+        "reserved_bytes": 12593397760,
+        "available_bytes": 5507248640,
+        "operation": "inference",
+        "basis": "dense decoder KV estimate + configured inference workspace",
+        "required_bytes": 313655296,
+        "reserve_bytes": 1073741824,
+        "admitted": true,
+        "kv_bytes": 45219840,
+        "kv_estimate_available": true,
+        "workspace_bytes": 268435456
+      },
+      "response": "<think>\nOkay, the user asked me"
+    },
+    {
+      "phase": "train",
+      "seconds": 7.461299045011401,
+      "peak_allocated_bytes": 12406562816,
+      "peak_reserved_bytes": 12664700928,
+      "admission": {
+        "device": "cuda:0",
+        "total_bytes": 25286737920,
+        "free_bytes": 4508286976,
+        "allocated_bytes": 11756924416,
+        "reserved_bytes": 12664700928,
+        "available_bytes": 5416063488,
+        "operation": "train",
+        "basis": "gradient + optimizer state + configured activation workspace",
+        "required_bytes": 1073741824,
+        "reserve_bytes": 1073741824,
+        "admitted": true,
+        "gradient_bytes": 0,
+        "new_optimizer_bytes": 0,
+        "workspace_bytes": 1073741824,
+        "activation_estimate_supplied": true,
+        "optimizer_estimate_available": true
+      },
+      "loss": 0.27520718425512314,
+      "gradient_norm": 0.29812389612197876
+    }
+  ],
+  "sequence_lengths": [
+    381,
+    387,
+    393,
+    399
+  ],
+  "dense_merge_admission": {
+    "device": "cuda:0",
+    "total_bytes": 25286737920,
+    "free_bytes": 4410966016,
+    "allocated_bytes": 11668655616,
+    "reserved_bytes": 12664700928,
+    "available_bytes": 5407011328,
+    "operation": "residual_merge",
+    "basis": "bf16 residual copies + dense per-layer workspace",
+    "required_bytes": 28563210240,
+    "reserve_bytes": 1073741824,
+    "admitted": false
+  },
+  "dense_merge_check_extra_gpu_bytes": 1254912,
+  "compact_preview": {
+    "strategy": "cpu_requantize",
+    "preview": true,
+    "applied": false,
+    "relative_update_error": 2.1355512331521616,
+    "estimated_cpu_workspace_bytes": 4278910976,
+    "dense_gpu_residual_bytes_after": 0,
+    "base_revision": "original",
+    "default_error_gate_passes": false,
+    "wall_seconds": 332.4069461390027,
+    "layers": 280,
+    "extra_gpu_bytes": 1024
+  },
+  "gpu_after": "NVIDIA GeForce RTX 3090, 24576, 19617, 4500",
+  "notes": [
+    "Shared GPU; other workloads unchanged.",
+    "Successful selected configuration, not absolute largest-model or context capacity.",
+    "Activation workspace budget is explicit; admission does not guarantee fit."
+  ]
+}

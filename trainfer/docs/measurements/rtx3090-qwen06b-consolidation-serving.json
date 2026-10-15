@@ -1,0 +1,43 @@
+{
+  "source_commit": "222a223cf7de36ea1e34f50efe63c1004c11792c",
+  "consolidation": {
+    "strategy": "cpu_requantize",
+    "preview": false,
+    "applied": true,
+    "relative_update_error": 9.218869506470035,
+    "estimated_cpu_workspace_bytes": 151126016,
+    "dense_gpu_residual_bytes_after": 0,
+    "base_revision": "aa22a9f1719444f981446c925915c2f9",
+    "default_error_gate_passes": false,
+    "wall_seconds": 5.664904780001962
+  },
+  "layers": 196,
+  "chats": [
+    {
+      "first_stream_event_seconds": 5.889279704992077,
+      "latency_seconds": 6.02240601099038,
+      "after_update": false,
+      "cursor": 3
+    },
+    {
+      "first_stream_event_seconds": 6.095795809989795,
+      "latency_seconds": 6.22825996899337,
+      "after_update": false,
+      "cursor": 3
+    },
+    {
+      "first_stream_event_seconds": 6.467495079996297,
+      "latency_seconds": 6.608961402991554,
+      "after_update": true,
+      "cursor": 4
+    }
+  ],
+  "merge_extra_gpu_bytes": 52224,
+  "update_completion_seconds": 6.396697543998016,
+  "wall_seconds": 6.616483121004421,
+  "notes": [
+    "Synthetic shared-GPU integration check; no quality claim.",
+    "Explicit relative-error allowance 10 exercises application.",
+    "First stream event includes text buffering; not token-level TTFT."
+  ]
+}

@@ -21,9 +21,11 @@ from .commit_stream import CommitBroadcaster
 from .config import ServeConfig
 from .engine.replay import IdleReplayScheduler, ReplayPolicy
 from .engine.train import TrainEngine
+from .errors import InvalidInputError, NotFoundError, TaskFailedError, TimeoutError as CommitTimeoutError
 from .logging_backends import LoggerConfig, MetricsLogger, flatten_scalars, get_logger
 from .queue import ComputeQueue, new_batch_id
 from .snapshot import SnapshotManager
+from .scheduling import model_operation
 from .state import ModelState
 from .ttrl_mv import TTRLPolicy, TTRLScheduler
 from .trajectory import TrajectoryLog, new_response_id
@@ -87,6 +89,11 @@ class Controller:
 
     # ------------------------------------------------------------------ lifecycle
     async def start(self) -> None:
+        from .engine.extensions import load_extensions
+        from .engine.optimizers import get_optimizer
+
+        await asyncio.to_thread(load_extensions)
+        get_optimizer(self.cfg.optimizer)
         self.state = ModelState.load(
             model_name=self.cfg.model,
             max_seq_length=self.cfg.max_seq_length,
@@ -94,6 +101,10 @@ class Controller:
             lora_alpha=self.cfg.lora_alpha,
             lora_dropout=self.cfg.lora_dropout,
             load_in_4bit=self.cfg.load_in_4bit,
+            inference_burst=self.cfg.inference_burst,
+            lora_target_modules=self.cfg.lora_target_modules,
+            gradient_checkpointing=self.cfg.gradient_checkpointing,
+            model_dtype=self.cfg.model_dtype,
         )
         if self.cfg.frozen_ref:
             self.state.load_frozen_ref()
@@ -104,6 +115,10 @@ class Controller:
             per_objective_lr=self.cfg.per_objective_lr,
             default_watchlist=self.cfg.default_watchlist,
             optimizer_class=self.cfg.optimizer,
+            optimizer_kwargs=self.cfg.optimizer_kwargs,
+            memory_reserve_bytes=self.cfg.memory_reserve_bytes,
+            training_workspace_bytes=self.cfg.training_workspace_bytes,
+            inference_workspace_bytes=self.cfg.inference_workspace_bytes,
         )
         # Stamp run-level params into the external logger once the state is
         # loaded; NullLogger swallows this, real backends record it as
@@ -118,7 +133,7 @@ class Controller:
                 "frozen_ref": bool(self.cfg.frozen_ref),
             }
         )
-        await self.queue.start(self._handle_task)
+        await self.queue.start(self._handle_task, on_complete=self._on_task_complete)
         if self.cfg.idle_replay:
             self._replay = IdleReplayScheduler(self, ReplayPolicy.from_config(self.cfg))
             await self._replay.start()
@@ -183,6 +198,17 @@ class Controller:
             deadline_s=deadline_s,
             hard_stop_grace_s=hard_stop_grace_s,
         )
+        if drain.get("in_flight"):
+            # The worker still owns mutable model state and may still log.
+            # Never save a torn checkpoint or close its logger underneath it.
+            self._defer_logger_close = True
+            log.error("shutdown deadline exceeded with an active update; autosave skipped")
+            return {"already_shut_down": False, **drain}
+        if self.cfg.autosave_on_exit and self.state is not None:
+            try:
+                await asyncio.to_thread(self._save_exit_snapshot)
+            except Exception:
+                log.exception("autosave_on_exit failed")
         try:
             self.metrics_logger.close()
         except Exception as exc:  # pragma: no cover — logger is optional
@@ -193,8 +219,44 @@ class Controller:
             "timed_out": drain["timed_out"],
         }
 
+    def _save_exit_snapshot(self) -> None:
+        with self.state.mode_lock:
+            self.snapshots.save(
+                self.cfg.autosave_snapshot_name, self.state, self.trajectory,
+                engine=self.train_engine, include_training=self.cfg.autosave_training_state,
+            )
+
     # ------------------------------------------------------------------ queue handler
     def _handle_task(self, task) -> Any:
+        """All model reads and mutations serialize against generation."""
+        with model_operation(self.state.mode_lock, "update"):
+            return self._handle_task_locked(task)
+
+    def _on_task_complete(self, task) -> None:
+        """Runs on the event loop after the queue publishes the cursor."""
+        if getattr(self, "_defer_logger_close", False):
+            self._defer_logger_close = False
+            try:
+                self.metrics_logger.close()
+            except Exception:
+                log.exception("deferred logger close failed")
+        if task.kind != "train" or task.error is not None:
+            return
+        payload = task.payload
+        objective = payload.get("objective") or "multi[" + "+".join(
+            sorted({o["name"] for o in payload.get("objectives", [])})
+        ) + "]"
+        if payload.get("procedure", "gradient") != "gradient":
+            objective = "procedure:" + payload["procedure"]
+        self.commits.broadcast_commit(
+            cursor=task.token,
+            objective=objective,
+            loss=float(task.result.get("loss") or 0.0),
+            components=task.result.get("components") or {},
+            batch_size=len(payload.get("samples", [])),
+        )
+
+    def _handle_task_locked(self, task) -> Any:
         """Runs on the single worker thread. May raise; queue catches and stores."""
         t0 = time.time()
         kind = task.kind
@@ -206,6 +268,8 @@ class Controller:
                 # readers don't see "unknown" for every multi step.
                 names = [o.get("name", "?") for o in payload["objectives"]]
                 objective = "multi[" + "+".join(sorted(set(names))) + "]"
+            if payload.get("procedure", "gradient") != "gradient":
+                objective = "procedure:" + payload["procedure"]
             try:
                 result = self.train_engine.step(payload)
             except BaseException as exc:
@@ -251,22 +315,26 @@ class Controller:
             scalars = flatten_scalars(components or {})
             if scalars:
                 self.metrics_logger.log_metrics(scalars, step=task.token)
-            # /v1/commits/stream broadcast. Runs synchronously here (the queue
-            # worker runs on the event loop and `_handle_task` is sync), so
-            # `put_nowait` only *schedules* SSE wakeups — the queue's finally
-            # block still advances `_completed_token` before any subscriber
-            # coroutine resumes. That's what preserves the spec's "cursor=N in
-            # the event ⇒ /v1/state/stats reports committed >= N" invariant.
-            self.commits.broadcast_commit(
-                cursor=task.token,
-                objective=objective,
-                loss=float(result.get("loss") or 0.0),
-                components=components or {},
-                batch_size=len(payload.get("samples", [])),
-            )
             return {"loss": result.get("loss"), "components": components, "wall": wall}
         elif kind == "merge":
+            strategy = payload.get("strategy", "residual")
+            if strategy == "cpu_requantize":
+                from .consolidation import consolidate
+
+                report = consolidate(
+                    self.state, self.cfg.data_dir / "consolidation",
+                    preview=payload.get("preview", False),
+                    max_relative_update_error=payload.get("max_relative_update_error"),
+                    max_cpu_workspace_bytes=payload.get("max_cpu_workspace_bytes", 4 * 1024**3),
+                )
+                if report["applied"]:
+                    self.train_engine.reset_optimizer()
+                return report
+            if strategy != "residual" or payload.get("preview"):
+                raise ValueError("preview requires strategy=cpu_requantize; unknown merge strategy")
+            self.train_engine.memory.residual_merge(self.state)
             self.state.merge_active_into_residual()
+            self.train_engine.reset_optimizer()
             return {
                 "merges_applied": self.state.merges_applied,
                 "residual_fp": self.state.residual_fingerprint(),
@@ -274,14 +342,20 @@ class Controller:
             }
         elif kind == "snapshot_save":
             name = payload["name"]
-            self.snapshots.save(name, self.state, self.trajectory)
+            if payload.get("include_training"):
+                self.snapshots.save(name, self.state, self.trajectory,
+                                    engine=self.train_engine, include_training=True)
+            else:
+                self.snapshots.save(name, self.state, self.trajectory)
             return {"saved": name, "wall": time.time() - t0}
         elif kind == "snapshot_load":
             name = payload["name"]
-            manifest = self.snapshots.load(name, self.state)
-            # Adam m/v from the old trajectory no longer match the restored
-            # weights. Drop the optimizer so the next train step rebuilds fresh.
-            self.train_engine.reset_optimizer()
+            if payload.get("resume"):
+                manifest = self.snapshots.load(name, self.state, engine=self.train_engine, resume=True)
+            else:
+                manifest = self.snapshots.load(name, self.state)
+                # Weights-only restore deliberately starts fresh optimizer state.
+                self.train_engine.reset_optimizer()
             return {"loaded": name, "manifest": manifest, "wall": time.time() - t0}
         elif kind == "eval_greedy_rank":
             from .memorize import greedy_rank_fraction
@@ -317,11 +391,24 @@ class Controller:
             return {"fraction": frac, "matched": matched, "total": total, "wall": wall}
         elif kind == "reset_adapter":
             self.state.reset_active_adapter()
+            self.train_engine.reset_optimizer()
             return {"ok": True, "wall": time.time() - t0}
         else:
             raise ValueError(f"unknown task kind {kind!r}")
 
     # ------------------------------------------------------------------ public ops
+    async def wait_for_commit(self, token: int, timeout: float = 60.0):
+        """A dependency succeeds only when its update actually succeeded."""
+        try:
+            task = await self.queue.wait_for(token, timeout=timeout)
+        except asyncio.TimeoutError as exc:
+            raise CommitTimeoutError(f"timed out waiting for commit token {token}") from exc
+        except KeyError as exc:
+            raise NotFoundError(f"unknown commit token {token}") from exc
+        if task.error is not None:
+            raise TaskFailedError(f"commit token {token} failed") from task.error
+        return task
+
     async def generate(
         self, messages: list[dict[str, str]], **kwargs: Any
     ) -> dict[str, Any]:
@@ -330,11 +417,9 @@ class Controller:
         sees it' guarantee from the caller's viewpoint: callers may pass
         `after_commit_token` to block on that specific training."""
         wait_for = kwargs.pop("after_commit_token", None)
+        self._reject_if_shutting_down()
         if wait_for is not None:
-            try:
-                await self.queue.wait_for(int(wait_for), timeout=60.0)
-            except (asyncio.TimeoutError, KeyError):
-                pass
+            await self.wait_for_commit(int(wait_for))
         parse_reasoning = kwargs.pop("parse_reasoning", True)
         use_adapter = kwargs.pop("use_adapter", True)
         # Run the actual generation outside the queue — training+inference
@@ -347,6 +432,10 @@ class Controller:
         model = self.state.model
 
         def _run() -> str:
+            with self.state.mode_lock:
+                return _run_locked()
+
+        def _run_locked() -> str:
             # `disable_adapter()` is only present on PEFT-wrapped models; the
             # base-only path (e.g. smoke tests with a raw HF model) doesn't
             # have it, so we degrade gracefully.
@@ -357,6 +446,7 @@ class Controller:
                         self.state.tokenizer,
                         messages,
                         mode_lock=self.state.mode_lock,
+                        memory_admission=getattr(self.train_engine, "memory", None),
                         **kwargs,
                     )
             return generate_chat(
@@ -364,6 +454,7 @@ class Controller:
                 self.state.tokenizer,
                 messages,
                 mode_lock=self.state.mode_lock,
+                memory_admission=getattr(self.train_engine, "memory", None),
                 **kwargs,
             )
 
@@ -400,11 +491,9 @@ class Controller:
         stays responsive.
         """
         wait_for = kwargs.pop("after_commit_token", None)
+        self._reject_if_shutting_down()
         if wait_for is not None:
-            try:
-                await self.queue.wait_for(int(wait_for), timeout=60.0)
-            except (asyncio.TimeoutError, KeyError):
-                pass
+            await self.wait_for_commit(int(wait_for))
         parse_reasoning = kwargs.pop("parse_reasoning", True)
         use_adapter = kwargs.pop("use_adapter", True)
 
@@ -429,12 +518,13 @@ class Controller:
             else:
                 ctx = contextlib.nullcontext()
             try:
-                with ctx:
+                with self.state.mode_lock, ctx:
                     for chunk in generate_chat_stream(
                         model,
                         self.state.tokenizer,
                         messages,
                         mode_lock=self.state.mode_lock,
+                        memory_admission=getattr(self.train_engine, "memory", None),
                         **kwargs,
                     ):
                         asyncio.run_coroutine_threadsafe(q.put(chunk), loop)
@@ -527,21 +617,32 @@ class Controller:
           — runs as ONE queue task. Per-objective samples may differ; the
           engine combines them in a single backward pass. Caller is responsible
           for batching upstream if rollouts get large.
+        - Registered custom procedure: one queue task regardless of chunk_size;
+          the procedure owns its internal iteration and validates its inputs.
         """
         self._reject_if_shutting_down()
+        procedure = spec.get("procedure", "gradient")
+        if procedure != "gradient":
+            from .engine.procedures import get_procedure
+
+            try:
+                get_procedure(procedure).validate(spec)
+            except (ValueError, KeyError, TypeError) as exc:
+                raise InvalidInputError(str(exc)) from exc
         has_obj = "objective" in spec and spec.get("objective")
         has_objs = "objectives" in spec and spec.get("objectives")
         if has_obj and has_objs:
             raise ValueError(
                 "submit_train: set exactly one of 'objective' or 'objectives'"
             )
-        if not has_obj and not has_objs:
+        if procedure == "gradient" and not has_obj and not has_objs:
             raise ValueError("submit_train: must set 'objective' or 'objectives'")
 
         total_samples = 0
         if has_objs:
             for obj in spec["objectives"]:
-                total_samples += len(obj.get("samples", []))
+                samples = obj.get("samples")
+                total_samples += len(spec.get("samples", []) if samples is None else samples)
         else:
             total_samples = len(spec.get("samples", []))
 
@@ -552,6 +653,14 @@ class Controller:
             raise BatchTooLargeError(
                 f"batch_too_large: request has {total_samples} samples, cap is {max_samples}"
             )
+
+        if procedure == "gradient" and spec.get("microbatch_size") is not None:
+            from .engine.accumulation import plan
+
+            try:
+                plan(spec)  # Reject unsupported reductions before admitting any tasks.
+            except (ValueError, KeyError, TypeError) as exc:
+                raise InvalidInputError(str(exc)) from exc
 
         batch_id = new_batch_id()
 
@@ -569,8 +678,8 @@ class Controller:
                 return {"queue_pressure": "high"}
             return {}
 
-        if has_objs:
-            # Multi-objective: don't chunk — one combined-loss step.
+        if has_objs or procedure != "gradient":
+            # Combined loss/custom procedures each own one complete update.
             t = await self.queue.try_submit("train", dict(spec), batch_id=batch_id)
             return {
                 "batch_id": batch_id,
@@ -584,16 +693,18 @@ class Controller:
         chunk_size = spec.get(
             "chunk_size", 2
         )  # small default for 0.6B; caller can bump
-        tasks = []
+        if not isinstance(chunk_size, int) or chunk_size < 1:
+            raise InvalidInputError("chunk_size must be a positive integer")
+        payloads = []
         for i in range(0, max(1, len(samples)), chunk_size):
             sub = {
                 **spec,
                 "samples": samples[i : i + chunk_size] if samples else samples,
             }
-            t = await self.queue.try_submit("train", sub, batch_id=batch_id)
-            tasks.append(t)
+            payloads.append(sub)
             if not samples:
                 break
+        tasks = await self.queue.submit_many("train", payloads, batch_id=batch_id)
         # The commit_token is the last task's token.
         commit_token = tasks[-1].token
         return {
@@ -738,26 +849,49 @@ class Controller:
             )
         return await self.submit_train(spec)
 
-    async def request_merge(self) -> dict[str, Any]:
+    async def request_merge(self, *, strategy: str = "residual", preview: bool = False,
+                            max_relative_update_error: float | None = None,
+                            max_cpu_workspace_bytes: int = 4 * 1024**3) -> dict[str, Any]:
         self._reject_if_shutting_down()
-        task = await self.queue.submit("merge", {})
-        result = await self.queue.wait_for(task, timeout=300.0)
+        task = await self.queue.submit("merge", {
+            "strategy": strategy, "preview": preview,
+            "max_relative_update_error": max_relative_update_error,
+            "max_cpu_workspace_bytes": max_cpu_workspace_bytes,
+        })
+        # CPU consolidation can exceed five minutes for large models. Keep
+        # the accepted operation attached to its caller until it finishes; a
+        # fixed wait timeout loses the result while mutation continues.
+        result = await self.queue.wait_for(task)
+        if isinstance(result.error, ValueError):
+            raise InvalidInputError(str(result.error)) from result.error
+        if result.error is not None:
+            raise result.error
         return {
             "commit_token": task.token,
             "result": result.result,
             "error": str(result.error) if result.error else None,
         }
 
-    async def request_snapshot_save(self, name: str) -> dict[str, Any]:
+    async def request_snapshot_save(self, name: str, *, include_training: bool = False) -> dict[str, Any]:
         self._reject_if_shutting_down()
-        task = await self.queue.submit("snapshot_save", {"name": name})
+        task = await self.queue.submit("snapshot_save", {"name": name, "include_training": include_training})
         result = await self.queue.wait_for(task, timeout=300.0)
+        if isinstance(result.error, ValueError):
+            raise InvalidInputError(str(result.error)) from result.error
+        if result.error is not None:
+            raise result.error
         return {"commit_token": task.token, "result": result.result}
 
-    async def request_snapshot_load(self, name: str) -> dict[str, Any]:
+    async def request_snapshot_load(self, name: str, *, resume: bool = False) -> dict[str, Any]:
         self._reject_if_shutting_down()
-        task = await self.queue.submit("snapshot_load", {"name": name})
+        task = await self.queue.submit("snapshot_load", {"name": name, "resume": resume})
         result = await self.queue.wait_for(task, timeout=300.0)
+        if isinstance(result.error, ValueError):
+            raise InvalidInputError(str(result.error)) from result.error
+        if isinstance(result.error, FileNotFoundError):
+            raise NotFoundError(f"snapshot {name!r} or its payload is missing") from result.error
+        if result.error is not None:
+            raise result.error
         return {"commit_token": task.token, "result": result.result}
 
     async def submit_eval_greedy_rank(

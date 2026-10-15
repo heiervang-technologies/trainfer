@@ -149,3 +149,37 @@ def test_submit_after_drain_raises_shutting_down():
             await q.submit("train", {})
 
     asyncio.run(main())
+
+
+def test_deadline_does_not_report_running_thread_as_completed():
+    import threading
+
+    async def scenario():
+        from trainfer.queue import ComputeQueue
+        from trainfer.errors import ShutdownDroppedError
+
+        entered, release = threading.Event(), threading.Event()
+        q = ComputeQueue()
+
+        def handler(task):
+            entered.set()
+            assert release.wait(2)
+
+        await q.start(handler)
+        active = await q.submit("train", {})
+        queued = await q.submit("train", {})
+        assert await asyncio.to_thread(entered.wait, 1)
+        try:
+            result = await q.graceful_drain(deadline_s=0.001, hard_stop_grace_s=0.001)
+            assert result["in_flight"]
+            assert not active.done.is_set()
+            assert q.committed == -1
+            assert isinstance((await q.wait_for(queued.token)).error, ShutdownDroppedError)
+        finally:
+            release.set()
+            await q.stop()
+        assert active.done.is_set()
+        assert active.error is None
+        assert q.committed == queued.token
+
+    asyncio.run(scenario())

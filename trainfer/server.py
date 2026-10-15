@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, Literal
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -82,7 +82,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     model: str | None = None
     messages: list[ChatMessage]
-    max_tokens: int | None = 256
+    max_tokens: int | None = Field(default=256, gt=0)
     temperature: float = 0.7
     top_p: float = 0.95
     stream: bool = False
@@ -136,12 +136,15 @@ class ObjectiveSpec(BaseModel):
 
 
 class TrainRequest(BaseModel):
+    procedure: str = "gradient"
+    procedure_kwargs: dict[str, Any] = Field(default_factory=dict)
     objective: str | None = None
     objectives: list[ObjectiveSpec] | None = None
     samples: list[dict[str, Any]] = Field(default_factory=list)
     batch_objectives: list[dict[str, Any]] = Field(default_factory=list)
     kwargs: dict[str, Any] = Field(default_factory=dict)
-    chunk_size: int = 2
+    chunk_size: int = Field(default=2, ge=1)
+    microbatch_size: int | None = Field(default=None, ge=1)
 
 
 class FeedbackRequest(BaseModel):
@@ -153,6 +156,15 @@ class FeedbackRequest(BaseModel):
 
 class SnapshotRequest(BaseModel):
     name: str
+    include_training: bool = False
+    resume: bool = False
+
+
+class MergeRequest(BaseModel):
+    strategy: Literal["residual", "cpu_requantize"] = "residual"
+    preview: bool = False
+    max_relative_update_error: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    max_cpu_workspace_bytes: int = Field(default=4 * 1024**3, gt=0)
 
 
 class MemorizeRequest(BaseModel):
@@ -203,19 +215,23 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
         _load_verifier_plugins()
 
         # Crash-safe auto-restore: if the previous run wrote an _autosave
-        # snapshot, load it before we accept requests. Failures here are
-        # non-fatal — we just log and keep the freshly-loaded base weights.
+        # snapshot, load it before accepting requests. Never silently discard
+        # trained state by serving a cold model after a failed restore.
         if cfg.autoload_on_boot:
             name = cfg.autosave_snapshot_name
             try:
                 if name in app.state.controller.snapshots.list():
                     log.info("autoload_on_boot — restoring snapshot %r", name)
-                    await app.state.controller.request_snapshot_load(name)
+                    manifest = await asyncio.to_thread(app.state.controller.snapshots.describe, name)
+                    resume = cfg.autosave_training_state and manifest.get("resumable", False)
+                    await app.state.controller.request_snapshot_load(name, resume=resume)
                     log.info("autoload_on_boot — restored %r", name)
             except Exception:
                 log.exception(
-                    "autoload_on_boot — load %r failed; continuing cold", name
+                    "autoload_on_boot — load %r failed; refusing to serve cold weights", name
                 )
+                await app.state.controller.stop()
+                raise
 
         # Hot reload: patches function bodies in place on file save.
         # Gated on cfg.dev_autoreload (or TRAINFER_DEV_AUTORELOAD=1). Safe to
@@ -228,19 +244,9 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
         try:
             yield
         finally:
-            # Auto-snapshot before graceful shutdown so the next boot picks
-            # up exactly where this one left off. Written while the queue is
-            # still alive so the snapshot task runs through the same
-            # single-writer path as user-requested saves.
-            if cfg.autosave_on_exit:
-                name = cfg.autosave_snapshot_name
-                try:
-                    log.info("autosave_on_exit — saving snapshot %r", name)
-                    await app.state.controller.request_snapshot_save(name)
-                    log.info("autosave_on_exit — saved %r", name)
-                except Exception:
-                    log.exception("autosave_on_exit — save %r failed", name)
-
+            # Controller closes admission, drains accepted updates, then saves
+            # under the model lock. A pre-drain snapshot can miss accepted work
+            # or wait indefinitely before the shutdown deadline even starts.
             # Prefer the graceful path so pending /v1/wait callers get
             # ShutdownDroppedError envelopes instead of hanging on their own
             # 60s timeout (see issue #11).
@@ -289,6 +295,18 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
             "commit_sse_subscribers": c.commits.subscriber_count,
             "commit_sse_drops": c.commits.drops,
             "replay": replay,
+            "memory_admission": {
+                "reserve_bytes": cfg.memory_reserve_bytes,
+                "training_workspace_bytes": cfg.training_workspace_bytes,
+                "inference_workspace_bytes": cfg.inference_workspace_bytes,
+                "last_execution_check": (
+                    c.train_engine.memory.last_report if c.train_engine is not None else None
+                ),
+            },
+            "scheduler": (
+                c.state.mode_lock.stats()
+                if c.state and hasattr(c.state.mode_lock, "stats") else None
+            ),
         }
 
     # --------------------------------------------------------------- chat
@@ -299,6 +317,10 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
         messages = [m.model_dump() for m in req.messages]
 
         if req.stream:
+            # Resolve before sending HTTP 200 / SSE headers, so dependency
+            # failures use the same structured errors as non-streaming chat.
+            if req.after_commit_token is not None:
+                await c.wait_for_commit(req.after_commit_token)
 
             async def sse():
                 ttft_observed = False
@@ -308,7 +330,7 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
                         max_new_tokens=req.max_tokens or 256,
                         temperature=req.temperature,
                         top_p=req.top_p,
-                        after_commit_token=req.after_commit_token,
+                        after_commit_token=None,
                         enable_thinking=req.enable_thinking,
                         parse_reasoning=req.parse_reasoning,
                         use_adapter=req.use_adapter,
@@ -502,16 +524,16 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
 
     # --------------------------------------------------------------- state ops
     @app.post("/v1/state/merge")
-    async def state_merge() -> dict[str, Any]:
-        return await app.state.controller.request_merge()
+    async def state_merge(req: MergeRequest | None = None) -> dict[str, Any]:
+        return await app.state.controller.request_merge(**(req or MergeRequest()).model_dump())
 
     @app.post("/v1/state/snapshot/save")
     async def state_save(req: SnapshotRequest) -> dict[str, Any]:
-        return await app.state.controller.request_snapshot_save(req.name)
+        return await app.state.controller.request_snapshot_save(req.name, include_training=req.include_training)
 
     @app.post("/v1/state/snapshot/load")
     async def state_load(req: SnapshotRequest) -> dict[str, Any]:
-        return await app.state.controller.request_snapshot_load(req.name)
+        return await app.state.controller.request_snapshot_load(req.name, resume=req.resume)
 
     @app.get("/v1/state/snapshots")
     async def state_list() -> dict[str, Any]:
@@ -574,7 +596,7 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
     async def wait(token: int, timeout: float = 60.0) -> dict[str, Any]:
         c: Controller = app.state.controller
         try:
-            task = await c.queue.wait_for(int(token), timeout=timeout)
+            task = await c.wait_for_commit(int(token), timeout=timeout)
             return {"committed": True, "token": task.token, "kind": task.kind}
         except asyncio.TimeoutError:
             return {"committed": False, "reason": "timeout"}

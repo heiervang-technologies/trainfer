@@ -14,7 +14,6 @@ import json
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 import torch
@@ -27,29 +26,14 @@ pytestmark = pytest.mark.cpu_only
 
 
 def _make_fake_state() -> ModelState:
-    """A ModelState with a stub model (no GPU). Only merged_deltas matter here."""
-    state = ModelState.__new__(ModelState)
-    state.model = MagicMock()
-    # Make model.named_parameters iterable returning (name, param) pairs.
-    fake_params: list[tuple[str, torch.nn.Parameter]] = [
-        (
-            "base.0.self_attn.q_proj.lora_A.default.weight",
-            torch.nn.Parameter(torch.randn(4, 8)),
-        ),
-        (
-            "base.0.self_attn.q_proj.lora_B.default.weight",
-            torch.nn.Parameter(torch.randn(8, 4)),
-        ),
-    ]
-    state.model.named_parameters = lambda: iter(fake_params)
-    state.tokenizer = MagicMock()
-    state.base_model_name = "test/fake"
-    state.lora_rank = 4
-    state.lora_alpha = 8
+    """Use actual small layers so shape and residual binding are exercised."""
+    from trainfer.tests.test_snapshot_residual_bind import _make_state_with_fake_model
+
+    state = _make_state_with_fake_model()
     state.merges_applied = 2
     state.merged_deltas = {
-        "layer.0.q_proj.weight": torch.randn(16, 16, dtype=torch.bfloat16),
-        "layer.1.k_proj.weight": torch.randn(16, 16, dtype=torch.bfloat16),
+        "layer0.weight": torch.randn(8, 8, dtype=torch.bfloat16),
+        "layer1.weight": torch.randn(8, 8, dtype=torch.bfloat16),
     }
     return state
 

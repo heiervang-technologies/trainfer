@@ -22,7 +22,6 @@ import logging
 from typing import Any
 
 import torch
-import torch.nn.functional as F
 
 from ._utils import build_chat_inputs, pad_and_stack, sequence_logprob_mean
 
@@ -127,7 +126,9 @@ def ccpd_v2_loss(
         try:
             from unsloth import FastLanguageModel
 
-            FastLanguageModel.for_training(model)
+            FastLanguageModel.for_training(
+                model, use_gradient_checkpointing=getattr(model, "_trainfer_gradient_checkpointing", True),
+            )
         except Exception:
             pass
     if user_preferred:

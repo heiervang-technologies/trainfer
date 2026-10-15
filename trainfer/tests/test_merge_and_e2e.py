@@ -64,6 +64,318 @@ def test_merge_determinism():
     print("[merge] determinism OK")
 
 
+@pytest.mark.gpu
+def test_training_restarts_after_repeated_merges():
+    """A fresh optimizer must learn after each adapter consolidation."""
+    state = ModelState.load(
+        model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
+        max_seq_length=256, lora_rank=8, lora_alpha=16,
+    )
+    engine = TrainEngine(state, lr=5e-5)
+    spec = {"objective": "sft", "samples": [{
+        "prompt": "Name a color.", "response": "Blue is a calming color.",
+    }]}
+    for _ in range(3):
+        result = engine.step(spec)
+        assert result["components"]["grad_norm_total"] > 0
+        assert any(
+            p.detach().count_nonzero().item() > 0
+            for name, p in state.model.named_parameters() if "lora_B" in name
+        )
+        state.merge_active_into_residual()
+        engine.reset_optimizer()
+
+
+@pytest.mark.gpu
+def test_snapshot_resume_reproduces_real_optimizer_update(tmp_path):
+    import torch
+    from trainfer.snapshot import SnapshotManager
+
+    state = ModelState.load(
+        model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
+        max_seq_length=256, lora_rank=8, lora_alpha=16,
+    )
+    engine = TrainEngine(state, lr=5e-5)
+    spec = {"objective": "sft", "samples": [{
+        "prompt": "Name a color.", "response": "Blue is a calming color.",
+    }]}
+    engine.step(spec)
+    manager = SnapshotManager(tmp_path)
+    manager.save("resume", state, engine=engine, include_training=True)
+    expected = engine.step(spec)
+    expected_weights = state.extract_active_adapter()
+    engine.step(spec)
+    manager.load("resume", state, engine=engine, resume=True)
+    actual = engine.step(spec)
+    assert actual["loss"] == pytest.approx(expected["loss"], abs=1e-6)
+    for name, tensor in state.extract_active_adapter().items():
+        assert torch.equal(tensor, expected_weights[name]), name
+
+
+@pytest.mark.gpu
+def test_cached_decoder_residual_and_snapshot_adapter_cache(tmp_path):
+    import torch
+    import unsloth.models.qwen3 as qwen
+    from trainfer.snapshot import SnapshotManager
+
+    state = ModelState.load(
+        model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
+        max_seq_length=256, lora_rank=8, lora_alpha=16,
+    )
+    projection = next(module for name, module in state.model.named_modules()
+                      if name.endswith("q_proj") and hasattr(module, "lora_A")
+                      and getattr(module.base_layer.weight, "quant_state", None) is not None)
+    a, b = projection.lora_A["default"].weight, projection.lora_B["default"].weight
+    with torch.no_grad():
+        a.fill_(0.05)
+        b.fill_(0.05)
+    manager = SnapshotManager(tmp_path)
+    manager.save("trained", state)
+    x = torch.ones(1, 1, a.shape[1], device=a.device, dtype=torch.bfloat16) * 0.1
+    with torch.no_grad():
+        before = qwen.fast_linear_forward(projection, x).clone()
+    assert hasattr(a, "_fast_lora")  # Exercise a populated, cast decoder cache.
+    state.merge_active_into_residual()
+    assert not hasattr(a, "_fast_lora")
+    with torch.no_grad():
+        after = qwen.fast_linear_forward(projection, x).clone()
+        # Compare with the unpatched decoder too: missing residual must be a
+        # material error in this test, not hidden below numerical tolerance.
+        missing = qwen.fast_linear_forward._trainfer_original(projection, x).clone()
+    torch.testing.assert_close(after, before, rtol=0.01, atol=0.03)
+    assert float((missing - before).abs().mean()) > 1.0
+    assert hasattr(a, "_fast_lora")
+    manager.load("trained", state)
+    assert not hasattr(a, "_fast_lora")
+    with torch.no_grad():
+        restored = qwen.fast_linear_forward(projection, x).clone()
+    torch.testing.assert_close(restored, before, rtol=0, atol=0)
+
+
+@pytest.mark.gpu
+def test_custom_optimizer_and_procedure_resume_on_real_model(tmp_path, monkeypatch):
+    import torch
+    from trainfer.engine.optimizers import OPTIMIZERS, OptimizerFactory
+    from trainfer.engine.procedures import PROCEDURES, ProcedureFactory
+    from trainfer.snapshot import SnapshotManager
+
+    class TwoSteps:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, engine, spec):
+            self.calls += 1
+            for _ in range(2):
+                result = engine.gradient_step(spec)
+            result["components"]["procedure_calls"] = self.calls
+            return result
+
+        def state_dict(self):
+            return {"calls": self.calls}
+
+        def load_state_dict(self, saved):
+            self.calls = saved["calls"]
+
+    monkeypatch.setitem(OPTIMIZERS, "test_gpu_sgd", OptimizerFactory(torch.optim.SGD, "1"))
+    monkeypatch.setitem(PROCEDURES, "test_gpu_repeat", ProcedureFactory(TwoSteps, lambda spec: None, "1"))
+    state = ModelState.load(
+        model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
+        max_seq_length=256, lora_rank=4, lora_alpha=8,
+    )
+    engine = TrainEngine(state, lr=1e-3, optimizer_class="test_gpu_sgd",
+                         optimizer_kwargs={"momentum": 0.9})
+    spec = {"procedure": "test_gpu_repeat", "objective": "sft", "samples": [{
+        "prompt": "Name a color.", "response": "Blue is a calming color.",
+    }]}
+    engine.step(spec)
+    manager = SnapshotManager(tmp_path)
+    manager.save("resume", state, engine=engine, include_training=True)
+    expected = engine.step(spec)
+    expected_weights = state.extract_active_adapter()
+    engine.step(spec)
+    manager.load("resume", state, engine=engine, resume=True)
+    actual = engine.step(spec)
+    assert actual["loss"] == pytest.approx(expected["loss"], abs=1e-6)
+    assert actual["components"]["procedure_calls"] == expected["components"]["procedure_calls"]
+    for name, value in state.extract_active_adapter().items():
+        assert torch.equal(value, expected_weights[name]), name
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("checkpointing", ["standard", "off"])
+def test_model_controls_and_memory_rejection_before_forward(tmp_path, monkeypatch, checkpointing):
+    import torch
+    from unsloth import FastLanguageModel
+    from trainfer.errors import MemoryAdmissionError
+
+    state = ModelState.load(
+        model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
+        max_seq_length=256, lora_rank=4, lora_alpha=8,
+        lora_target_modules=["q_proj", "v_proj"],
+        gradient_checkpointing=checkpointing, model_dtype="bfloat16",
+    )
+    names = [n for n, p in state.model.named_parameters() if p.requires_grad]
+    assert names and all("q_proj" in n or "v_proj" in n for n in names)
+    engine = TrainEngine(state, memory_reserve_bytes=1024**4)
+    original = state.extract_active_adapter()
+    spec = {"objective": "sft", "samples": [{"prompt": "Name a color.", "response": "Blue."}]}
+    # Inference disables gradients; admission must restore the training mode
+    # before constructing its optimizer, without evaluating a forward pass.
+    FastLanguageModel.for_inference(state.model)
+    with monkeypatch.context() as patch:
+        patch.setattr(state.model, "forward", lambda *a, **kw: pytest.fail("forward before admission"))
+        with pytest.raises(MemoryAdmissionError):
+            engine.step(spec)
+    for name, value in state.extract_active_adapter().items():
+        assert torch.equal(value, original[name])
+    assert not engine.memory.last_report["admitted"]
+    engine.memory.reserve_bytes = 256 * 1024**2
+    result = engine.step(spec)
+    assert result["components"]["grad_norm_total"] > 0
+    assert engine.memory.last_report["admitted"]
+    assert not engine.memory.last_report["activation_estimate_supplied"]
+    from trainfer.engine.inference import generate_chat
+
+    generate_chat(state.model, state.tokenizer, [{"role": "user", "content": "Name a color."}],
+                  max_new_tokens=2, temperature=0, mode_lock=state.mode_lock,
+                  memory_admission=engine.memory)
+    assert engine.memory.last_report["operation"] == "inference"
+    assert engine.memory.last_report["kv_estimate_available"]
+    engine.step(spec)
+    flags = [m.gradient_checkpointing for m in state.model.modules() if hasattr(m, "gradient_checkpointing")]
+    assert flags and all(bool(flag) == (checkpointing != "off") for flag in flags)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("equal_lengths", [False, True])
+def test_microbatch_accumulation_reduces_real_training_peak(tmp_path, equal_lengths):
+    import torch
+    from trainfer.snapshot import SnapshotManager
+
+    state = ModelState.load(
+        model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
+        max_seq_length=512, lora_rank=8, lora_alpha=16,
+    )
+    engine = TrainEngine(state, lr=1e-4)
+    samples = [{"prompt": "Name a color." if equal_lengths else f"Name color number {i}.",
+                "response": "Blue is a calming color. " * (15 if equal_lengths else 12 + i)}
+               for i in range(4)]
+    engine.step({"objective": "sft", "samples": samples[:1]})
+    manager = SnapshotManager(tmp_path)
+    manager.save("initial", state, engine=engine, include_training=True)
+    initial = state.extract_active_adapter()
+    results = []
+    specs = [
+        {"objective": "sft", "samples": samples},
+        {"objective": "sft", "samples": samples, "microbatch_size": 1},
+        # Independent reference using the existing combined-loss path: same
+        # per-sample forwards, all graphs retained, one combined backward.
+        {"objectives": [{"name": "sft", "samples": [s], "weight": 0.25} for s in samples]},
+    ]
+    for spec in specs:
+        manager.load("initial", state, engine=engine, resume=True)
+        for opt in engine._opts.values():
+            opt.zero_grad(set_to_none=True)
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+        result = engine.step(spec)
+        torch.cuda.synchronize()
+        peak = torch.cuda.max_memory_allocated()
+        delta = torch.cat([(value.double() - initial[name].double()).flatten()
+                           for name, value in state.extract_active_adapter().items()])
+        gradients = torch.cat([p.grad.detach().cpu().double().flatten()
+                               for p in state.model.parameters() if p.requires_grad])
+        results.append((result, peak, delta, gradients))
+    full, micro, reference = results
+    cosine = float(torch.nn.functional.cosine_similarity(full[2], micro[2], dim=0))
+    reference_cosine = float(torch.nn.functional.cosine_similarity(reference[2], micro[2], dim=0))
+    gradient_cosine = float(torch.nn.functional.cosine_similarity(reference[3], micro[3], dim=0))
+    gradient_error = float((reference[3] - micro[3]).norm() / reference[3].norm())
+    print({"full_peak_bytes": full[1], "microbatch_peak_bytes": micro[1],
+           "full_loss": full[0]["loss"], "microbatch_loss": micro[0]["loss"],
+           "update_cosine": cosine, "combined_reference_loss": reference[0]["loss"],
+           "combined_reference_cosine": reference_cosine, "equal_lengths": equal_lengths,
+           "gradient_cosine": gradient_cosine, "gradient_relative_error": gradient_error,
+           "parameter_dtypes": sorted({str(p.dtype) for p in state.model.parameters() if p.requires_grad})})
+    assert micro[1] < full[1]
+    assert micro[0]["loss"] == pytest.approx(reference[0]["loss"], rel=1e-5)
+    assert reference_cosine > 0.999
+    assert gradient_error < 1e-5
+
+
+@pytest.mark.gpu
+def test_consolidation_preview_keeps_resident_residual_conversion_on_cpu(tmp_path):
+    """A GPU-resident residual must not create a float32 GPU temporary."""
+    import torch
+    from trainfer.consolidation import consolidate
+
+    layer = torch.nn.Module()
+    layer.base_layer = torch.nn.Linear(2048, 2048, bias=False, dtype=torch.bfloat16, device="cuda")
+    layer.lora_A = torch.nn.ModuleDict({"default": torch.nn.Linear(
+        2048, 4, bias=False, dtype=torch.bfloat16, device="cuda",
+    )})
+    layer.lora_B = torch.nn.ModuleDict({"default": torch.nn.Linear(
+        4, 2048, bias=False, dtype=torch.bfloat16, device="cuda",
+    )})
+    state = ModelState(torch.nn.Sequential(layer), None, "synthetic", 4, 4)
+    residual = torch.full((2048, 2048), 0.001, dtype=torch.bfloat16, device="cuda")
+    state.merged_deltas = {"0.weight": residual}
+    torch.cuda.synchronize()
+    allocated = torch.cuda.memory_allocated()
+    torch.cuda.reset_peak_memory_stats()
+    report = consolidate(state, tmp_path, preview=True)
+    torch.cuda.synchronize()
+    assert torch.cuda.max_memory_allocated() - allocated < 1024**2
+    assert not report["applied"]
+    assert state.merged_deltas["0.weight"] is residual
+
+
+@pytest.mark.gpu
+def test_cpu_consolidation_keeps_gpu_compact_and_trainable(tmp_path):
+    import math
+    import torch
+    from trainfer.consolidation import consolidate
+    from trainfer.snapshot import SnapshotManager
+    from trainfer.tests.test_residual_live_path import _greedy_logprob
+
+    state = ModelState.load(
+        model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
+        max_seq_length=256, lora_rank=8, lora_alpha=16,
+    )
+    engine = TrainEngine(state, lr=1e-4)
+    prompt, response = "Name a color.", "Blue is a calming color."
+    spec = {"objective": "sft", "samples": [{"prompt": prompt, "response": response}]}
+    for _ in range(3):
+        engine.step(spec)
+    before_lp = _greedy_logprob(state, prompt, response)
+    manager = SnapshotManager(tmp_path / "snapshots")
+    manager.save("before", state)
+    torch.cuda.synchronize()
+    allocated = torch.cuda.memory_allocated()
+    torch.cuda.reset_peak_memory_stats()
+    # Exercise the lossy mechanism, not a claim that a tiny three-step update
+    # survives NF4. The measured error is printed and default admission is
+    # covered separately; this test explicitly permits a larger error.
+    report = consolidate(state, tmp_path / "work", max_relative_update_error=2.0)
+    torch.cuda.synchronize()
+    extra_peak = torch.cuda.max_memory_allocated() - allocated
+    assert extra_peak < 32 * 1024**2, "consolidation materialized dense GPU weights"
+    assert report["applied"] and math.isfinite(report["relative_update_error"])
+    assert not state.merged_deltas
+    after_lp = _greedy_logprob(state, prompt, response)
+    assert math.isfinite(after_lp)
+    print({"relative_update_error": report["relative_update_error"],
+           "extra_gpu_peak_bytes": extra_peak, "wall_seconds": report["wall_seconds"],
+           "logprob_before": before_lp, "logprob_after": after_lp})
+    engine.reset_optimizer()
+    result = engine.step(spec)
+    assert result["components"]["grad_norm_total"] > 0
+    manager.load("before", state)
+    assert state.base_revision == "original"
+    restored_lp = _greedy_logprob(state, prompt, response)
+    assert restored_lp == pytest.approx(before_lp, abs=1e-5)
+
+
 def test_end_to_end_training_moves_logprob():
     """Train on a fixed (prompt, target); measure mean log-prob on the target
     before and after several steps; confirm it moved upward (loss decreased).

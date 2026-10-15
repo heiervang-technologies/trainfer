@@ -8,6 +8,7 @@ test runner happy.
 from __future__ import annotations
 
 import argparse
+import json
 import pathlib
 
 from .config import ServeConfig
@@ -23,6 +24,19 @@ def parse_cli_args(argv: list[str] | None = None) -> ServeConfig:
     p.add_argument("--data-dir", type=pathlib.Path, default=cfg.data_dir)
     p.add_argument("--max-seq-length", type=int, default=cfg.max_seq_length)
     p.add_argument("--lora-rank", type=int, default=cfg.lora_rank)
+    p.add_argument("--lora-alpha", type=int, default=cfg.lora_alpha)
+    p.add_argument("--lora-dropout", type=float, default=cfg.lora_dropout)
+    p.add_argument("--lora-target-modules", nargs="+", default=cfg.lora_target_modules)
+    p.add_argument("--gradient-checkpointing", choices=["unsloth", "standard", "off"], default=cfg.gradient_checkpointing)
+    p.add_argument("--model-dtype", choices=["auto", "bfloat16", "float32"], default=cfg.model_dtype)
+    p.add_argument("--optimizer", default=cfg.optimizer)
+    p.add_argument("--optimizer-kwargs", default="{}", help="JSON object passed to the registered optimizer factory")
+    p.add_argument("--memory-reserve-mib", type=int, default=cfg.memory_reserve_bytes // 1024**2)
+    p.add_argument("--training-workspace-mib", type=int, default=cfg.training_workspace_bytes // 1024**2)
+    p.add_argument("--inference-workspace-mib", type=int, default=cfg.inference_workspace_bytes // 1024**2)
+    p.add_argument("--inference-burst", type=int, default=cfg.inference_burst)
+    p.add_argument("--autosave-training-state", action="store_true", default=cfg.autosave_training_state)
+    p.add_argument("--autoload-on-boot", action=argparse.BooleanOptionalAction, default=cfg.autoload_on_boot)
     p.add_argument(
         "--no-4bit", dest="load_in_4bit", action="store_false", default=cfg.load_in_4bit
     )
@@ -42,6 +56,32 @@ def parse_cli_args(argv: list[str] | None = None) -> ServeConfig:
     cfg.data_dir = args.data_dir
     cfg.max_seq_length = args.max_seq_length
     cfg.lora_rank = args.lora_rank
+    if min(args.lora_rank, args.lora_alpha, args.max_seq_length) < 1:
+        p.error("rank, alpha, and sequence length must be positive")
+    if not 0 <= args.lora_dropout < 1:
+        p.error("--lora-dropout must be in [0, 1)")
+    cfg.lora_alpha = args.lora_alpha
+    cfg.lora_dropout = args.lora_dropout
+    cfg.lora_target_modules = args.lora_target_modules
+    cfg.gradient_checkpointing = args.gradient_checkpointing
+    cfg.model_dtype = args.model_dtype
+    cfg.optimizer = args.optimizer
+    try:
+        cfg.optimizer_kwargs = json.loads(args.optimizer_kwargs)
+        if not isinstance(cfg.optimizer_kwargs, dict):
+            raise ValueError("expected a JSON object")
+    except ValueError as exc:
+        p.error(f"invalid --optimizer-kwargs: {exc}")
+    if min(args.memory_reserve_mib, args.training_workspace_mib, args.inference_workspace_mib) < 0:
+        p.error("memory budgets must be nonnegative")
+    cfg.memory_reserve_bytes = args.memory_reserve_mib * 1024**2
+    cfg.training_workspace_bytes = args.training_workspace_mib * 1024**2
+    cfg.inference_workspace_bytes = args.inference_workspace_mib * 1024**2
+    if args.inference_burst < 1:
+        p.error("--inference-burst must be positive")
+    cfg.inference_burst = args.inference_burst
+    cfg.autosave_training_state = args.autosave_training_state
+    cfg.autoload_on_boot = args.autoload_on_boot
     cfg.load_in_4bit = args.load_in_4bit
     cfg.idle_replay = args.idle_replay
     cfg.frozen_ref = args.frozen_ref

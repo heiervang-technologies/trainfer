@@ -1,16 +1,10 @@
 """Live model state: base_weights ⊕ merged_deltas ⊕ active_lora_adapter.
 
-The invariant from LIVELEARN §3.1/§6:
-  * base is NF4, never modified.
-  * merged_deltas is a bf16 residual held in CPU RAM between merges, applied at
-    load time by adding into a dequantized copy of the base (never requantized
-    back to NF4 — that's the 4-bit merge gotcha from §6).
-  * active_lora_adapter is hot in GPU; gradients flow into it.
-
-For this implementation we rely on Unsloth's FastLanguageModel + PEFT LoRA. The
-merged_deltas residual is materialized by Unsloth's existing dequant→fp32→merge
-path when `merge()` is called; we keep our own bf16 copy so we can repeat the
-merge or restore it on load.
+The default merge keeps the base unchanged and applies accumulated bf16
+residuals at forward time. The opt-in CPU requantization strategy consolidates
+updates into the base itself, records a new base revision, and removes dense
+residuals. Both strategies keep a zero-output, trainable active LoRA adapter.
+Snapshots carry adapted base projections so either revision can be restored.
 
 Live residual application
 -------------------------
@@ -29,20 +23,26 @@ Attaching the delta to the Parameter itself (rather than Gemini's
 survives Unsloth's ``for_training``/``for_inference`` mode flips (``id(W)``
 stays stable across those flips, empirically verified on Qwen3).
 
-A fallback ``forward_pre_hook`` is also registered on ``base_layer`` so the
+Single-token cached decoding instead uses ``fast_linear_forward``/GEMV.
+That entry point is patched separately, only for sequence length one; longer
+inputs delegate to the matmul patch and must not receive the residual twice.
+
+A fallback ``forward_hook`` is also registered on ``base_layer`` so the
 standard PEFT path (used under ``model.disable_adapter()`` for the KL anchor)
 still applies the residual.
 """
 
 from __future__ import annotations
 
-import functools
 import logging
+import math
 import sys
-import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from .scheduling import ModelScheduler
+from .errors import TrainferMatmulRebindError
 
 import torch
 import torch.nn.functional as F
@@ -51,13 +51,12 @@ log = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------- matmul_lora patch
-# Module-level, installed once on import. Idempotent via the sentinel attribute.
+# Installed on model load. Idempotent via the sentinel attribute.
 #
 # Upstream coupling: our wrapper assumes matmul_lora's signature is
 # (X, W, W_quant, A, B, s, out=None). If a future Unsloth refactor changes
 # param names or count, we abort the install loudly rather than run with a
-# silently-wrong residual — trainfer still works, just without the fast-path
-# residual (PEFT-standard forward_pre_hook backstop still fires).
+# silently-wrong residual. A PEFT hook cannot cover the fast path.
 _EXPECTED_MATMUL_LORA_PARAMS = ("X", "W", "W_quant", "A", "B", "s", "out")
 
 
@@ -74,15 +73,11 @@ def _install_matmul_lora_patch() -> None:
     except (TypeError, ValueError):
         params = ()
     if params != _EXPECTED_MATMUL_LORA_PARAMS:
-        log.warning(
-            "trainfer: unsloth.kernels.utils.matmul_lora signature changed "
-            "(got %s, expected %s) — skipping residual patch install. "
-            "Live residual via fast path is DISABLED; PEFT forward_pre_hook "
-            "backstop still covers disable_adapter() codepaths.",
-            params,
-            _EXPECTED_MATMUL_LORA_PARAMS,
+        raise TrainferMatmulRebindError(
+            "unsloth.kernels.utils.matmul_lora signature changed "
+            f"(got {params}, expected {_EXPECTED_MATMUL_LORA_PARAMS}); "
+            "refusing to load a model whose fast path would ignore merged updates"
         )
-        return
 
     def _patched(X, W, W_quant, A, B, s, out=None):
         out_res = original(X, W, W_quant, A, B, s, out=out)
@@ -121,9 +116,8 @@ def _install_matmul_lora_patch() -> None:
     log.debug("installed matmul_lora residual patch (%d bindings rewritten)", replaced)
 
 
-@functools.cache
 def install() -> None:
-    """Idempotent: patches unsloth's matmul_lora to honor ``W._residual_delta``.
+    """Idempotently patch prefill and cached decoding to honor residuals.
 
     Called automatically by ``ModelState.load``. External callers can invoke
     ``trainfer.install()`` explicitly to pre-warm the patch before constructing a
@@ -133,6 +127,52 @@ def install() -> None:
     ``sys.modules["unsloth.*"]``. See PR#8 review.
     """
     _install_matmul_lora_patch()
+    _install_fast_linear_patch()
+
+
+def _install_fast_linear_patch() -> None:
+    """Single-token cached decoding uses GEMV, bypassing matmul_lora."""
+    import inspect
+    import unsloth.kernels.utils as utils
+
+    original = getattr(utils, "fast_linear_forward", None)
+    if getattr(original, "_trainfer_patched", False):
+        return
+    expected = ("proj", "X", "temp_lora", "out")
+    try:
+        params = tuple(inspect.signature(original).parameters)
+    except (TypeError, ValueError):
+        params = ()
+    if params != expected:
+        raise TrainferMatmulRebindError(
+            f"unsloth fast_linear_forward signature changed (got {params}, expected {expected}); "
+            "refusing to ignore residuals during cached decoding"
+        )
+
+    def patched(proj, X, temp_lora=None, out=None):
+        result = original(proj, X, temp_lora=temp_lora, out=out)
+        # Longer inputs delegate to the already-patched matmul_lora. Adding
+        # there a second time would double the residual during prefill.
+        if X.shape[1] != 1:
+            return result
+        weight = getattr(getattr(proj, "base_layer", proj), "weight", None)
+        delta = getattr(weight, "_residual_delta", None)
+        if delta is None:
+            return result
+        return result + F.linear(X, delta.to(device=result.device, dtype=result.dtype))
+
+    patched._trainfer_patched = True
+    patched._trainfer_original = original
+    for name, module in list(sys.modules.items()):
+        if not name.startswith("unsloth"):
+            continue
+        try:
+            members = list(vars(module).items())
+        except TypeError:
+            continue
+        for attr, value in members:
+            if value is original:
+                setattr(module, attr, patched)
 
 
 @dataclass
@@ -146,6 +186,8 @@ class ModelState:
     lora_alpha: int
     # Bookkeeping of what has been merged so far in this process.
     merges_applied: int = 0
+    # Identifies the packed base after explicit, lossy consolidation.
+    base_revision: str = "original"
     # CPU bf16 residual: name -> delta tensor from all prior merges.
     merged_deltas: dict[str, torch.Tensor] = field(default_factory=dict)
     # Serializes train/infer mode flips. Unsloth's FastLanguageModel.for_inference
@@ -154,7 +196,7 @@ class ModelState:
     # the inference fast path, the buffers vanish mid-call. Everything that
     # calls .generate() or .backward() must hold this lock across the mode flip
     # AND the work that depends on those buffers.
-    mode_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    mode_lock: Any = field(default_factory=ModelScheduler, repr=False)
     # Base-layer forward pre-hook handles (fallback path for disable_adapter).
     # Keyed by LoraLayer name; stored so we can remove/rebind without leaking.
     _residual_hook_handles: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -162,6 +204,8 @@ class ModelState:
     # When set, objectives consume it as ``pi_ref`` for KL anchoring instead
     # of falling back to ``model.disable_adapter()`` on the live model.
     frozen_ref: Any = field(default=None, repr=False)
+    # Runtime choices affecting training replay, persisted for resume checks.
+    training_config: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def load(
@@ -172,9 +216,27 @@ class ModelState:
         lora_alpha: int = 16,
         lora_dropout: float = 0.0,
         load_in_4bit: bool = True,
+        inference_burst: int = 4,
+        lora_target_modules: list[str] | None = None,
+        gradient_checkpointing: str = "unsloth",
+        model_dtype: str = "auto",
     ) -> "ModelState":
+        if lora_rank < 1 or lora_alpha < 1 or max_seq_length < 1:
+            raise ValueError("rank, alpha, and sequence length must be positive")
+        if not 0 <= lora_dropout < 1:
+            raise ValueError("lora_dropout must be in [0, 1)")
+        targets = list(lora_target_modules) if lora_target_modules is not None else [
+            "q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj",
+        ]
+        if not targets or any(not isinstance(name, str) or not name.strip() for name in targets):
+            raise ValueError("lora_target_modules must contain nonempty module names")
+        checkpoints = {"unsloth": "unsloth", "standard": True, "off": False}
+        dtypes = {"auto": None, "bfloat16": torch.bfloat16, "float32": torch.float32}
+        if gradient_checkpointing not in checkpoints or model_dtype not in dtypes:
+            raise ValueError("unsupported gradient checkpointing or model dtype")
         # Install the matmul_lora residual patch before Unsloth finishes
-        # binding its fast-path references. Idempotent + cached.
+        # binding its fast-path references. The live callable's sentinel makes
+        # this idempotent without caching success for a replaced backend.
         install()
         from unsloth import FastLanguageModel  # heavy import; lazy
 
@@ -183,59 +245,83 @@ class ModelState:
             model_name=model_name,
             max_seq_length=max_seq_length,
             load_in_4bit=load_in_4bit,
-            dtype=None,
+            dtype=dtypes[model_dtype],
         )
         # Qwen3 series: target the standard LoRA attention+MLP set.
         model = FastLanguageModel.get_peft_model(
             model,
             r=lora_rank,
-            target_modules=[
-                "q_proj",
-                "k_proj",
-                "v_proj",
-                "o_proj",
-                "gate_proj",
-                "up_proj",
-                "down_proj",
-            ],
+            target_modules=targets,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             bias="none",
-            use_gradient_checkpointing="unsloth",
+            use_gradient_checkpointing=checkpoints[gradient_checkpointing],
         )
+        model._trainfer_gradient_checkpointing = gradient_checkpointing != "off"
+        unsupported = [name for name, parameter in model.named_parameters()
+                       if parameter.requires_grad and "lora_A" not in name and "lora_B" not in name]
+        if unsupported:
+            raise ValueError(
+                "backend enabled non-LoRA trainable parameters that adapter snapshots cannot preserve: "
+                + ", ".join(unsupported[:5])
+            )
         return cls(
             model=model,
             tokenizer=tokenizer,
             base_model_name=model_name,
             lora_rank=lora_rank,
             lora_alpha=lora_alpha,
+            mode_lock=ModelScheduler(inference_burst),
+            training_config={
+                "max_seq_length": max_seq_length, "lora_dropout": lora_dropout,
+                "target_modules": sorted(targets), "gradient_checkpointing": gradient_checkpointing,
+                "model_dtype": model_dtype, "load_in_4bit": load_in_4bit,
+            },
         )
 
     # ------------------------------------------------------------------ adapter ops
     def reset_active_adapter(self) -> None:
-        """Zero the active LoRA matrices. Keeps rank+target intact."""
-        with torch.no_grad():
+        """Reset to a zero update with a live gradient path (random A, zero B).
+
+        Zeroing both factors makes both derivatives of B @ A zero. Reset
+        optimizer state whenever resetting an adapter with an existing optimizer.
+        """
+        with self.mode_lock, torch.no_grad():
+            self.invalidate_inference_cache()
             for name, p in self.model.named_parameters():
-                if "lora_A" in name or "lora_B" in name:
+                if "lora_A" in name:
+                    torch.nn.init.kaiming_uniform_(p, a=math.sqrt(5))
+                elif "lora_B" in name:
                     p.zero_()
-        log.info("active LoRA adapter zeroed")
+        log.info("active LoRA adapter reset (random A, zero B)")
 
     def extract_active_adapter(self) -> dict[str, torch.Tensor]:
         """Snapshot the LoRA A/B matrices only (the trainable part)."""
         out: dict[str, torch.Tensor] = {}
         for name, p in self.model.named_parameters():
             if "lora_A" in name or "lora_B" in name:
-                out[name] = p.detach().to("cpu", dtype=torch.bfloat16).clone()
+                out[name] = p.detach().cpu().clone()
         return out
 
     def load_active_adapter(self, sd: dict[str, torch.Tensor]) -> None:
-        with torch.no_grad():
+        with self.mode_lock, torch.no_grad():
+            self.invalidate_inference_cache()
             named = dict(self.model.named_parameters())
             for name, t in sd.items():
                 if name in named:
                     named[name].data.copy_(
                         t.to(named[name].dtype).to(named[name].device)
                     )
+
+    def invalidate_inference_cache(self) -> None:
+        """Call under mode_lock before changing adapters without a mode flip.
+
+        Unsloth caches cast LoRA tensors on Parameters during token decoding.
+        Copying/resetting float32 Parameters does not update their bf16 caches.
+        """
+        for parameter in self.model.parameters():
+            if hasattr(parameter, "_fast_lora"):
+                del parameter._fast_lora
 
     # ------------------------------------------------------------------ merge
     def merge_active_into_residual(self) -> None:
@@ -262,7 +348,7 @@ class ModelState:
                     continue
                 A = module.lora_A["default"].weight  # (r, in)
                 B = module.lora_B["default"].weight  # (out, r)
-                if A.abs().sum() == 0 and B.abs().sum() == 0:
+                if not torch.count_nonzero(B) or not torch.count_nonzero(A):
                     continue
                 delta = (B @ A).to(torch.float32) * scale  # (out, in)
                 key = f"{name}.weight"

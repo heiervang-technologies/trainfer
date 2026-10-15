@@ -23,6 +23,31 @@ For the *what* and *why* of trainfer, see [`trainfer/PLAN.md`](trainfer/PLAN.md)
 
 Studio consumers still read `LILE_DAEMON_URL` (and legacy `LILE_HOST` + `LILE_PORT`) from `studio/backend/routes/lile.py` in [`ht-unsloth`](https://github.com/heiervang-technologies/ht-unsloth) — point Studio at the daemon you start from this repo.
 
+## Compute scheduling and commit dependencies
+
+`--inference-burst N` (default 4) lets at most N consecutive inference operations
+run while an update is waiting. Updates retain FIFO order; inference requests
+retain order within their class. Scheduling occurs between complete generations
+and update operations, so a long generation or backward pass is not preempted.
+`/health.scheduler` reports operation counts, cumulative wait/hold time, and
+waiting requests for each class. Set N lower to favor update progress, or higher
+to favor inference under contention; benchmark your workload before tuning it.
+
+Training requests are admitted as a complete set of chunks or rejected with
+`queue_full`. An accepted request can still partially execute if a later step
+fails: there is no automatic rollback. Its final token reports any chunk failure.
+Clients should check dependency outcomes rather than infer success from the
+completion cursor alone. `/v1/wait` and dependent chat return `task_failed`
+(409), `not_found` (404), or `timeout` (504) instead of generating after an
+unsatisfied dependency. Completion history retains 1024 metadata records;
+older tokens return `commit_expired` (410). Tokens are process-local.
+
+Shutdown closes admission and drains before autosave. If an update outlives both
+the deadline and grace period, it stays tracked until it finishes; autosave is
+skipped to avoid writing an inconsistent checkpoint. Queued, unstarted work is
+resolved as dropped. A process supervisor may still need to terminate a stuck
+CUDA operation; the engine never pretends that such an operation completed.
+
 ## Ports
 
 | Port | Service | Default |
@@ -35,7 +60,7 @@ Studio consumers still read `LILE_DAEMON_URL` (and legacy `LILE_HOST` + `LILE_PO
 `ServeConfig.data_dir` defaults to `./trainfer_data/` (relative to the working directory). Inside:
 
 - `trajectory.jsonl` — append-only event log (`train_step`, `inference`, `feedback`, `eval_point`, …). See [`trainfer/trajectory.py`](trainfer/trajectory.py).
-- `snapshots/<name>/` — byte-exact checkpoints: model weights + optimizer state + bf16 residual + trajectory offset. See [`trainfer/snapshot.py`](trainfer/snapshot.py).
+- `snapshots/<name>/` — a manifest pointing to versioned tensor payloads, adapted base projections, and optional optimizer/RNG state. See [`trainfer/snapshot.py`](trainfer/snapshot.py).
 - `daemon.log` — written by the legacy Studio capsule spawn path (still readable; no longer produced by the in-repo entrypoint).
 - `rlvr_loop.jsonl` — RLVR scheduler events. See [`teach/rlvr_loop.py`](https://github.com/heiervang-technologies/cont/blob/main/teach/rlvr_loop.py) in the `cont` repo.
 - `tutor_run_01/` — committed eval baselines (`cold_500_det.json`, `trained_500_det{,_run2}.json`, `length_compression_finding.md`). Used as the anchor for length-compression regressions.
@@ -46,7 +71,45 @@ Override the directory at the config layer (`ServeConfig(data_dir=...)`) or via 
 
 - Snapshots are taken through the compute queue (single-writer), so `/v1/state/snapshot/save` is serialized against training and merges.
 - The reserved name `_autosave` is written automatically on graceful shutdown if `cfg.autosave_on_exit` is on, and reloaded at startup if `cfg.autoload_on_boot` is on.
-- Restore is byte-exact: LoRA adapter weights, bf16 CPU residual, merge counter, and the trajectory log offset all roll back together. There is no "partial" restore. On load, the residual is re-bound onto the live model's forward path (`_apply_residual_to_model`), stale hooks are cleared if the snapshot has no residual, and the optimizer is reset so Adam moments don't carry stale trajectory info.
+- Saves publish the manifest only after all payloads are written and synced. An interrupted overwrite leaves the previous snapshot readable. Checksums and model/adapter/quantization compatibility are checked before restore. Adapter dtype is preserved.
+- Snapshots include every adapted base projection, including packed quantization metadata and dense projections in mixed-precision models. This costs disk space but permits restoring an earlier base after consolidation. Restore stages rollback data on disk and copies projections in place, without a second GPU base.
+- Default load is **weights-only**: it restores weights/residuals and resets optimizer history. Save with `{"name":"session","include_training":true}` and load with `{"name":"session","resume":true}` to resume optimizer moments, Python/NumPy/torch/CUDA RNG state, and the model's KTO running baseline. Resume requires matching optimizer configuration, parameter order/shapes, reference mode, and CUDA device count. Identical numerical behavior across different software/hardware is not promised.
+- `--autosave-training-state` enables resumable autosaves and uses them on boot. Older weights-only autosaves still restore their weights. An invalid autosave now fails startup instead of silently serving a cold model; use `--no-autoload-on-boot` explicitly when a cold start is intended.
+- The trajectory remains append-only. Its saved byte offset is provenance metadata, not a request to truncate the log. Queue tokens remain process-local and are not rewound by snapshot load.
+
+## Compact consolidation and preview
+
+`POST /v1/state/merge` without a body keeps the existing dense-residual strategy.
+Merge requests await completion without a fixed engine timeout: large-model CPU
+previews can take several minutes. Configure client/proxy timeouts accordingly.
+Disconnecting a client does not cancel an accepted queue operation.
+To estimate a compact merge without modifying the model:
+
+```json
+{"strategy":"cpu_requantize","preview":true}
+```
+
+To apply it, use `{"strategy":"cpu_requantize"}`. It prepares each projection
+on CPU and stages candidate/rollback weights under `data_dir/consolidation/`.
+The model lock remains held during this operation: it is a serving pause, not
+an asynchronous weight copy. Packed GPU storage is overwritten in place; dense
+projections remain in their original dtype. The adapter and optimizer restart
+after a successful merge. A null update does not requantize the base again.
+
+Reports include per-layer and aggregate error relative to the intended update,
+retained update norm/cosine, unchanged weight fraction, and estimated CPU
+workspace. This estimates weight error, not task accuracy. Applying rejects an
+error norm at least as large as the update by default. Callers can supply
+`max_relative_update_error` to choose a different explicit bound; preview without
+a bound always reports the candidate. Even passing the default gate does not
+prove behavioral quality. Small updates can be erased by quantization.
+
+`max_cpu_workspace_bytes` defaults to 4 GiB and screens the estimated dense CPU
+working tensors before allocation. Backend/BLAS workspace and allocator overhead
+mean it is not a hard RSS limit. Temporary disk use includes old and new packed
+weights (and any dense adapted projections). Use a sufficiently large local data
+volume. The CPU backend was validated with bitsandbytes 0.50.2 and torch 2.10.0;
+older backends without CPU 4-bit operators cannot use this strategy.
 
 ## Cross-repo policy
 
@@ -61,7 +124,7 @@ unsloth @ git+https://github.com/heiervang-technologies/ht-unsloth@<tag>
 **Tag cadence (tied to upstream-sync).** ht-unsloth cuts a tag named `ht-YYYY-MM-DD` after every successful rebase of `ht` onto upstream Unsloth's `main` — that boundary is the natural "stable point" where upstream just shipped a compatible state, our patches replay clean, CI is green. trainfer bumps its pin on the same beat. Expected cadence: 2–4 weeks when upstream is hot (Gemma releases, transformers point releases), 6–8 weeks when quiet. Goal: trainfer never lives more than one tag behind the last upstream-compatible point.
 
 **When to bump the pin:**
-1. ht-unsloth pushes a new `ht-YYYY-MM-DD` tag. Confirm `matmul_lora`'s signature still matches `_EXPECTED_MATMUL_LORA_PARAMS` in [`trainfer/state.py`](trainfer/state.py:60) — if it drifted, the signature-guard test (`trainfer/tests/test_matmul_lora_patch.py::test_signature_mismatch_skips_install`) is the canary.
+1. ht-unsloth pushes a new `ht-YYYY-MM-DD` tag. Confirm `matmul_lora`'s signature still matches `_EXPECTED_MATMUL_LORA_PARAMS` in [`trainfer/state.py`](trainfer/state.py) — if it drifted, `test_signature_mismatch_rejects_install` verifies that model loading fails instead of silently ignoring residuals.
 2. Open a one-line PR bumping the `@<tag>` reference in `pyproject.toml` + `CLAUDE.md`. Keep `MIGRATION.md` at the historical SHA — that doc records what was current at relocation time, not the moving pin.
 3. Never `@ht` or `@main` in the pin — those are moving refs and break reproducibility. Always a tagged name (`ht-YYYY-MM-DD`) or, in emergencies, a frozen SHA.
 
@@ -90,3 +153,192 @@ Full GPU smoke (loads Qwen3-0.6B; ~90 s end-to-end):
 pip install -e .                         # full unsloth git dep
 python -m trainfer.tests.smoke_server        # in-process server, /v1/train + /v1/chat roundtrip
 ```
+
+## Microbatch accumulation
+
+`POST /v1/train` accepts `microbatch_size` independently of `chunk_size`:
+
+```json
+{"objective":"weighted_sft","chunk_size":8,"microbatch_size":1,
+ "samples":[{"prompt":"Name a color.","response":"Blue.","weight":3}]}
+```
+
+`chunk_size` partitions requests into optimizer steps/queue commits. Within each
+chunk, `microbatch_size` bounds samples per forward/backward; clipping and the
+optimizer step happen once after all microbatches. The model lock stays held
+throughout that update. To accumulate a whole request into one update, set
+`chunk_size` to at least its sample count. Combined-objective requests already
+form one update and can also specify `microbatch_size`.
+
+SFT and weighted SFT have explicit reduction contracts. Uneven final slices
+use sample counts or weight sums, respectively, rather than averaging slice
+means. Weighted SFT preserves its denominator clamp and includes zero-weight
+and fully masked samples with the same semantics as an unsplit batch.
+Combinations of those objectives preserve their independent normalization and
+outer objective weights. Unsupported objectives and batch sidecars reject
+before queue admission; no fallback silently changes the loss.
+
+Plugins can call `trainfer.engine.accumulation.register_reduction(loss_fn,
+denominator_fn)`, where `denominator_fn(samples, kwargs)` is pure and returns
+the objective's positive finite local denominator, including any clamp. The
+contract requires `loss * denominator` to be additive across sample slices.
+The objective must not couple samples, mutate a running baseline, or gate
+individual slices. Registration attaches to the callable, so replacing a named
+objective does not inherit the previous implementation's contract. This is a
+reduction extension point; arbitrary update procedures have a separate scope.
+
+Accumulation preserves the mathematical objective and number of optimizer
+steps, not bitwise GPU results. Changed tensor shapes, floating-point reduction
+order, and dropout can change numerical results. There is no automatic OOM
+retry or automatic adjustment of microbatch size. A failure before the optimizer
+step clears partial gradients and propagates through the commit token. As with
+ordinary training, an optimizer failure after it begins mutating parameters is
+not transactionally rolled back.
+
+## Memory admission and adapter controls
+
+The CLI exposes these model-loading choices:
+
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `--lora-rank`, `--lora-alpha` | 16, 16 | Adapter capacity and scaling; rank changes parameter, gradient, and optimizer storage. |
+| `--lora-dropout` | 0 | Adapter dropout; affects reproducibility and supported fast kernels. |
+| `--lora-target-modules q_proj v_proj` | All seven attention/MLP projections | Select adapted projections; fewer targets reduce adapter storage and computation but change the optimization space. |
+| `--gradient-checkpointing` | `unsloth` | `unsloth`, `standard`, or `off`; off trades additional activation storage for avoiding recomputation. |
+| `--model-dtype` | `auto` | `auto`, `bfloat16`, or `float32`, forwarded to the backend. Compatibility depends on model/hardware. |
+| `--no-4bit` | 4-bit loading enabled | Request dense base loading; an already quantized checkpoint may retain its own quantization configuration. |
+
+The engine preserves checkpointing selection across train/inference switches,
+including candidate generation in CCD/CCPD. Snapshots with training state check
+these model training settings on resume. A mismatch rejects resume; intentional
+weights-only restore remains available where tensor geometry matches. Older
+training snapshots without configuration metadata cannot establish matching
+settings for a newly loaded model and require weights-only restore.
+Backend-created non-LoRA trainable parameters (such as full embedding tables)
+reject loading because the adapter snapshot/reset contract does not cover them.
+
+Memory admission runs under the model lock immediately before a training
+forward, chat generation, or residual merge. It uses driver free bytes plus
+unused PyTorch reserved bytes, and keeps `--memory-reserve-mib` (default 256)
+uncommitted. It does not reserve GPU memory against other processes.
+
+- Training estimates missing gradient storage and lazy AdamW/AdamW8bit/Lion8bit
+  state, respecting bitsandbytes precision overrides and small-tensor rules.
+  `--training-workspace-mib` adds a caller-calibrated activation/backward budget.
+- Chat estimates a full dense decoder KV cache from model geometry, input and
+  output lengths, and a 256-token growth allowance. `--inference-workspace-mib`
+  adds a caller-calibrated prefill/logits/backend workspace budget. Architectures
+  without the required geometry report the KV estimate as unavailable.
+- Residual merge budgets new bf16 copies plus dense per-layer workspace. It
+  does not automatically switch to lossy requantization when rejected.
+
+Both workspace budgets default to zero: **passing admission does not prove the
+workload fits**. Unknown objective activations, internal objective rollouts,
+backend scratch, fragmentation, and other processes can still cause OOM.
+Snapshot restore and direct low-level state operations do not use these
+execution guards. Calibrate workspace for the actual model, objective, sequence
+length, and batch/microbatch shape; changing them can invalidate that budget.
+No admission decision reduces tokens, samples, or model capacity silently.
+
+`/health.memory_admission` reports configured budgets and the last execution
+check, including whether optimizer/KV estimates were available and whether a
+training activation budget was supplied. Direct admission rejection uses
+`memory_admission` (503); an accepted training task that fails execution-time
+admission is a failed commit under the existing commit contract. Stream errors
+after headers use the existing streaming error event. CPU work bypasses CUDA
+capacity checks.
+
+## Optimization extensions
+
+Installed, trusted packages can register optimizers, update procedures, and
+accumulation reductions from a zero-argument entry point:
+
+```toml
+[project.entry-points."trainfer.extensions"]
+my_methods = "my_package.trainfer_plugin:register"
+```
+
+Registration runs before model loading and worker startup. A registration
+failure stops startup. HTTP requests select registered names; they never supply
+Python import paths. Restart after adding/changing installed extensions.
+
+An optimizer registrar can use:
+
+```python
+from trainfer.engine.optimizers import register_optimizer
+from torch.optim import SGD
+
+register_optimizer("momentum_sgd", SGD, version="1")
+```
+
+Select it with `--optimizer momentum_sgd --optimizer-kwargs '{"momentum":0.9}'`.
+A factory receives the live trainable parameters, `lr`, and configured keyword
+arguments. It must return a torch optimizer owning exactly those parameters,
+without copying/replacing them, and must accept CPU parameters for snapshot
+preflight. Multiple parameter groups are allowed; resume checks group order as
+well as factory version and resolved optimizer class. `lr`/`params` cannot be
+overridden through the kwargs object. Bump the factory version when changing
+state interpretation. An optional `estimate_state_bytes(optimizer)` callback
+returns nonnegative integer bytes for future state allocation; it must be pure
+and must not allocate model workspace. Without it, unknown optimizer state
+costs remain explicitly unestimated in memory admission.
+
+Built-ins are `adamw`, `sgd`, and the historical `adamw8bit`/`lion8bit` names.
+For compatibility, the latter fall back to torch AdamW with a warning when
+bitsandbytes cannot be imported; constructor/runtime failures propagate.
+Per-objective mode retains its historical plain AdamW behavior for those two
+names. Custom factories can declare `supports_per_objective=False` to reject
+multiple optimizer instances over shared parameters. Otherwise each objective
+gets its own instance and configured objective LR. Explicit `adamw` and `sgd`
+have no algorithm fallback; the resolved class is checked on resume.
+
+For algorithms beyond loss composition, register a procedure:
+
+```python
+from trainfer.engine.procedures import register_procedure
+
+register_procedure("my_update", MyProcedure, validate=validate_request, version="1")
+```
+
+`MyProcedure()` must expose synchronous methods:
+
+- `run(engine, spec)` performs the update on `engine.state.model` and returns
+  `{"loss": float_or_none, "components": {...}}`, optionally with `skipped`.
+  Results must be finite JSON data, with no tensors or retained autograd graphs.
+- `state_dict()` returns its private algorithm state as tensors and primitive
+  containers, without side effects. It must not include a second model.
+- `load_state_dict(saved)` validates and restores CPU state without touching
+  the live model. Factories/state loading run independently during preflight.
+
+`validate_request(spec)` must be pure, inexpensive, and reject invalid shapes,
+unsupported options, or unbounded iterations before queue admission. Send
+`{"procedure":"my_update","procedure_kwargs":{...},"samples":[...]}` to
+`/v1/train`; objective fields are optional for custom procedures. The procedure
+owns one queue task/commit regardless of `chunk_size`, and owns its internal
+iteration semantics. It may call `engine.gradient_step(spec)` repeatedly to
+reuse registered losses, microbatching, clipping, optimizer state, and memory
+admission, or implement a derivative-free/other update directly. Direct custom
+allocations must call the memory guard with an appropriate workspace estimate.
+
+The engine switches to training mode (invalidating fast-inference adapter
+caches), then holds the shared model lock for the whole procedure. Long
+procedures therefore delay inference until they return. Procedures must not
+submit/wait on queue work, start another model, or mutate outside that lock.
+Canonical events identify them as `procedure:<name>`. Errors fail the commit and
+clear partial gradients, but do not roll back completed internal updates.
+
+Resumable snapshots persist procedure versions/state alongside optimizer
+factory versions, options, parameter groups, moments, and RNG. Compatibility
+checks run before live weight changes and preserve live RNG even when plugin
+constructors consume randomness. Missing or changed versions reject resume.
+Weights-only restore, adapter reset, and consolidation clear procedure state
+with optimizer state. This extension mechanism belongs in the engine; learning
+policies, data selection, and research algorithms can remain in external
+packages such as `cont`.
+
+Residual correctness depends on two pinned Unsloth entry points:
+`matmul_lora` for prefill and `fast_linear_forward` for single-token cached
+decoding. Installation checks both signatures and rebinds imported aliases.
+Adapter reset/restore invalidate cached cast LoRA tensors so a subsequent chat
+does not observe stale adapters. The decoder regression is
+`test_cached_decoder_residual_and_snapshot_adapter_cache`.

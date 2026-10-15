@@ -39,6 +39,7 @@ def generate_chat(
     top_p: float = 0.95,
     enable_thinking: bool | None = None,
     mode_lock: Any = None,
+    memory_admission: Any = None,
 ) -> str:
     """OpenAI-style messages → generated assistant text.
 
@@ -49,15 +50,18 @@ def generate_chat(
     prompt_text = _apply_template(tokenizer, messages, enable_thinking)
     enc = tokenizer(text=prompt_text, return_tensors="pt", add_special_tokens=False)
     device = next(model.parameters()).device
-    input_ids = enc["input_ids"].to(device)
+    input_ids = enc["input_ids"]
     attn = enc.get("attention_mask")
-    if attn is not None:
-        attn = attn.to(device)
 
     # Null-object pattern so callers that don't know about the lock still work.
     lock_cm = mode_lock if mode_lock is not None else contextlib.nullcontext()
 
     with lock_cm:
+        if memory_admission is not None:
+            memory_admission.inference(model, input_ids, max_new_tokens)
+        input_ids = input_ids.to(device)
+        if attn is not None:
+            attn = attn.to(device)
         try:
             from unsloth import FastLanguageModel
 
@@ -94,6 +98,7 @@ def generate_chat_stream(
     top_p: float = 0.95,
     enable_thinking: bool | None = None,
     mode_lock: Any = None,
+    memory_admission: Any = None,
 ) -> Iterator[str]:
     """Yield decoded text chunks as the model generates them.
 
@@ -108,14 +113,17 @@ def generate_chat_stream(
     prompt_text = _apply_template(tokenizer, messages, enable_thinking)
     enc = tokenizer(text=prompt_text, return_tensors="pt", add_special_tokens=False)
     device = next(model.parameters()).device
-    input_ids = enc["input_ids"].to(device)
+    input_ids = enc["input_ids"]
     attn = enc.get("attention_mask")
-    if attn is not None:
-        attn = attn.to(device)
 
     lock_cm = mode_lock if mode_lock is not None else contextlib.nullcontext()
 
     with lock_cm:
+        if memory_admission is not None:
+            memory_admission.inference(model, input_ids, max_new_tokens)
+        input_ids = input_ids.to(device)
+        if attn is not None:
+            attn = attn.to(device)
         try:
             from unsloth import FastLanguageModel
 
@@ -128,8 +136,18 @@ def generate_chat_stream(
             skip_prompt=True,
             skip_special_tokens=True,
         )
+        errors: list[BaseException] = []
 
         def _run():
+            try:
+                _generate()
+            except BaseException as exc:
+                errors.append(exc)
+                # HF generate normally closes the streamer. On failure it may
+                # never do so, leaving the consumer holding mode_lock forever.
+                streamer.on_finalized_text("", stream_end=True)
+
+        def _generate():
             with torch.no_grad():
                 gen_kwargs: dict[str, Any] = {
                     "input_ids": input_ids,
@@ -154,3 +172,5 @@ def generate_chat_stream(
                     yield chunk
         finally:
             thread.join()
+        if errors:
+            raise errors[0]

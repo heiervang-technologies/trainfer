@@ -1,5 +1,20 @@
 # trainfer — Design Choices
 
+## Engine consolidation update
+
+The dense-residual merge below remains the default. An opt-in `cpu_requantize`
+strategy now provides compact consolidation, with layerwise CPU/disk staging,
+in-place packed GPU copies, and an error preview/gate. This changes base weights,
+so snapshots now carry adapted base projections and quantization metadata.
+Explicit training resume additionally stores optimizer and RNG state.
+
+The initial real-model measurement demonstrates why this is opt-in: a three-step
+Qwen3-0.6B update required only 51 KiB of extra GPU allocation to consolidate,
+but quantization error exceeded the update norm and degraded target likelihood.
+The default gate rejects that candidate. See [engine improvement evidence](docs/engine-improvements.md)
+for the numbers and [operating instructions](../OPERATING.md) for API semantics.
+Weight error is a screening measurement, not proof of learning retention.
+
 One-pager of load-bearing decisions made before writing code. The plan in `PLAN.md` is the spec; this doc records where I made a call and why.
 
 ## Engine (§8 Q1)

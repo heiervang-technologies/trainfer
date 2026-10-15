@@ -1,0 +1,909 @@
+{
+  "source_commit": "f536f51ca477ba915c3ea95aa668ad9373f73545",
+  "model": "unsloth/qwen3-0.6b-unsloth-bnb-4bit",
+  "rank": 8,
+  "alpha": 16,
+  "max_seq_length": 512,
+  "microbatch_size": 1,
+  "samples_per_update": 4,
+  "max_generated_tokens": 24,
+  "temperature": 0,
+  "packages": {
+    "torch": "2.10.0",
+    "unsloth": "2026.4.6",
+    "transformers": "5.5.0",
+    "bitsandbytes": "0.50.2"
+  },
+  "torch_threads": 4,
+  "rows": [
+    {
+      "policy": "rlock",
+      "repeat": 0,
+      "wall_seconds": 5.499215371004539,
+      "peak_allocated_bytes": 808404992,
+      "peak_reserved_bytes": 849346560,
+      "generated_tokens": 144,
+      "mixed_tokens_per_second": 26.185553808141833,
+      "decode_tokens_per_second": 43.64088819931361,
+      "updates_per_second": 0.7273764946706065,
+      "update_latency_seconds": [
+        0.5237595359940315,
+        2.739705108993803,
+        4.404588866003905,
+        4.9085983059922
+      ],
+      "chats": [
+        {
+          "tokens": 24,
+          "dependency": 1,
+          "first_token_seconds": 2.783939102999284,
+          "first_token_cursor": 2,
+          "final_cursor": 2,
+          "latency_seconds": 3.3150690910115372
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 0.5684065789973829,
+          "first_token_cursor": 1,
+          "final_cursor": 1,
+          "latency_seconds": 1.0983670120040188
+        },
+        {
+          "tokens": 24,
+          "dependency": 3,
+          "first_token_seconds": 4.955498110997723,
+          "first_token_cursor": 4,
+          "final_cursor": 4,
+          "latency_seconds": 5.488500801991904
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 1.136064342004829,
+          "first_token_cursor": 1,
+          "final_cursor": 1,
+          "latency_seconds": 1.6431275000068126
+        },
+        {
+          "tokens": 24,
+          "dependency": 1,
+          "first_token_seconds": 3.3528468309959862,
+          "first_token_cursor": 2,
+          "final_cursor": 2,
+          "latency_seconds": 3.8891379499982577
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 1.6883134609961417,
+          "first_token_cursor": 1,
+          "final_cursor": 1,
+          "latency_seconds": 2.227914057992166
+        }
+      ],
+      "mode_switch_seconds": {
+        "for_training": {
+          "count": 4,
+          "total": 0.03907629501190968
+        },
+        "for_inference": {
+          "count": 6,
+          "total": 0.04120773702743463
+        }
+      },
+      "scheduler": null,
+      "gpu_before": "NVIDIA GeForce RTX 3090, 24576, 8675, 15442",
+      "gpu_after": "NVIDIA GeForce RTX 3090, 24576, 8651, 15465",
+      "correctness": {
+        "updates": 4,
+        "chats": 6,
+        "dependencies_met": true,
+        "identical_final_adapters": true
+      }
+    },
+    {
+      "policy": "burst1",
+      "repeat": 0,
+      "wall_seconds": 5.680695347007713,
+      "peak_allocated_bytes": 819701760,
+      "peak_reserved_bytes": 859832320,
+      "generated_tokens": 144,
+      "mixed_tokens_per_second": 25.34900944403778,
+      "decode_tokens_per_second": 42.06519111892059,
+      "updates_per_second": 0.7041391512232716,
+      "update_latency_seconds": [
+        0.5325483420019737,
+        1.6958807709888788,
+        2.7971335309994174,
+        3.9420483270077966
+      ],
+      "chats": [
+        {
+          "tokens": 24,
+          "dependency": 5,
+          "first_token_seconds": 3.989259301000857,
+          "first_token_cursor": 8,
+          "final_cursor": 8,
+          "latency_seconds": 4.541607628998463
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 0.5989218949980568,
+          "first_token_cursor": 5,
+          "final_cursor": 5,
+          "latency_seconds": 1.1748396360053448
+        },
+        {
+          "tokens": 24,
+          "dependency": 7,
+          "first_token_seconds": 5.145278954994865,
+          "first_token_cursor": 8,
+          "final_cursor": 8,
+          "latency_seconds": 5.668957159999991
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 1.728731939001591,
+          "first_token_cursor": 6,
+          "final_cursor": 6,
+          "latency_seconds": 2.3002956150012324
+        },
+        {
+          "tokens": 24,
+          "dependency": 5,
+          "first_token_seconds": 4.575959591005812,
+          "first_token_cursor": 8,
+          "final_cursor": 8,
+          "latency_seconds": 5.091847695002798
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 2.8319869999977527,
+          "first_token_cursor": 7,
+          "final_cursor": 7,
+          "latency_seconds": 3.401198255000054
+        }
+      ],
+      "mode_switch_seconds": {
+        "for_training": {
+          "count": 4,
+          "total": 0.04118700600520242
+        },
+        "for_inference": {
+          "count": 6,
+          "total": 0.046960335996118374
+        }
+      },
+      "scheduler": {
+        "inference_burst": 1,
+        "waiting": {
+          "inference": 0,
+          "update": 0
+        },
+        "operations": {
+          "inference": 6,
+          "update": 4
+        },
+        "wait_seconds": {
+          "inference": 14.719619741983479,
+          "update": 1.8590784709958825
+        },
+        "hold_seconds": {
+          "inference": 3.598864757004776,
+          "update": 2.080772622997756
+        }
+      },
+      "gpu_before": "NVIDIA GeForce RTX 3090, 24576, 8652, 15464",
+      "gpu_after": "NVIDIA GeForce RTX 3090, 24576, 8651, 15466",
+      "correctness": {
+        "updates": 4,
+        "chats": 6,
+        "dependencies_met": true,
+        "identical_final_adapters": true
+      }
+    },
+    {
+      "policy": "burst4",
+      "repeat": 0,
+      "wall_seconds": 5.678597846999764,
+      "peak_allocated_bytes": 830998528,
+      "peak_reserved_bytes": 872415232,
+      "generated_tokens": 144,
+      "mixed_tokens_per_second": 25.358372591234136,
+      "decode_tokens_per_second": 42.03731259649824,
+      "updates_per_second": 0.7043992386453927,
+      "update_latency_seconds": [
+        0.539000707998639,
+        3.449121452998952,
+        4.585917817996233,
+        5.083021272002952
+      ],
+      "chats": [
+        {
+          "tokens": 24,
+          "dependency": 9,
+          "first_token_seconds": 2.349611947996891,
+          "first_token_cursor": 9,
+          "final_cursor": 9,
+          "latency_seconds": 2.8966839959903155
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 0.5932410259993048,
+          "first_token_cursor": 9,
+          "final_cursor": 9,
+          "latency_seconds": 1.1275654810015112
+        },
+        {
+          "tokens": 24,
+          "dependency": 11,
+          "first_token_seconds": 5.118110360999708,
+          "first_token_cursor": 12,
+          "final_cursor": 12,
+          "latency_seconds": 5.6674907300039195
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 1.1659415969916154,
+          "first_token_cursor": 9,
+          "final_cursor": 9,
+          "latency_seconds": 1.6768041299947072
+        },
+        {
+          "tokens": 24,
+          "dependency": 9,
+          "first_token_seconds": 3.481280482010334,
+          "first_token_cursor": 10,
+          "final_cursor": 10,
+          "latency_seconds": 4.065847030011355
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 1.7155425349919824,
+          "first_token_cursor": 9,
+          "final_cursor": 9,
+          "latency_seconds": 2.289382591989124
+        }
+      ],
+      "mode_switch_seconds": {
+        "for_training": {
+          "count": 4,
+          "total": 0.041854462993796915
+        },
+        "for_inference": {
+          "count": 6,
+          "total": 0.041858301978209056
+        }
+      },
+      "scheduler": {
+        "inference_burst": 4,
+        "waiting": {
+          "inference": 0,
+          "update": 0
+        },
+        "operations": {
+          "inference": 6,
+          "update": 4
+        },
+        "wait_seconds": {
+          "inference": 8.492356984002981,
+          "update": 2.9863154299964663
+        },
+        "hold_seconds": {
+          "inference": 3.5824582540080883,
+          "update": 2.094938138994621
+        }
+      },
+      "gpu_before": "NVIDIA GeForce RTX 3090, 24576, 8651, 15466",
+      "gpu_after": "NVIDIA GeForce RTX 3090, 24576, 8701, 15415",
+      "correctness": {
+        "updates": 4,
+        "chats": 6,
+        "dependencies_met": true,
+        "identical_final_adapters": true
+      }
+    },
+    {
+      "policy": "burst1",
+      "repeat": 1,
+      "wall_seconds": 5.6439886189909885,
+      "peak_allocated_bytes": 808404992,
+      "peak_reserved_bytes": 872415232,
+      "generated_tokens": 144,
+      "mixed_tokens_per_second": 25.51387143401855,
+      "decode_tokens_per_second": 41.60711684505765,
+      "updates_per_second": 0.7087186509449598,
+      "update_latency_seconds": [
+        1.1597006489901105,
+        2.2322161230113124,
+        3.313961122999899,
+        4.433988568998757
+      ],
+      "chats": [
+        {
+          "tokens": 24,
+          "dependency": 13,
+          "first_token_seconds": 3.3598974409978837,
+          "first_token_cursor": 15,
+          "final_cursor": 15,
+          "latency_seconds": 3.9290673450013855
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 0.04844283900456503,
+          "first_token_cursor": 12,
+          "final_cursor": 12,
+          "latency_seconds": 0.6336857239948586
+        },
+        {
+          "tokens": 24,
+          "dependency": 15,
+          "first_token_seconds": 5.091168484010268,
+          "first_token_cursor": 16,
+          "final_cursor": 16,
+          "latency_seconds": 5.643170312003349
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 1.2073424709960818,
+          "first_token_cursor": 13,
+          "final_cursor": 13,
+          "latency_seconds": 1.7340652540005976
+        },
+        {
+          "tokens": 24,
+          "dependency": 13,
+          "first_token_seconds": 4.478928172000451,
+          "first_token_cursor": 16,
+          "final_cursor": 16,
+          "latency_seconds": 5.043365592995542
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 2.277118476005853,
+          "first_token_cursor": 14,
+          "final_cursor": 14,
+          "latency_seconds": 2.813056314000278
+        }
+      ],
+      "mode_switch_seconds": {
+        "for_inference": {
+          "count": 6,
+          "total": 0.04529304101015441
+        },
+        "for_training": {
+          "count": 4,
+          "total": 0.04262848098005634
+        }
+      },
+      "scheduler": {
+        "inference_burst": 1,
+        "waiting": {
+          "inference": 0,
+          "update": 0
+        },
+        "operations": {
+          "inference": 6,
+          "update": 4
+        },
+        "wait_seconds": {
+          "inference": 10.546706388005987,
+          "update": 2.3980442630127072
+        },
+        "hold_seconds": {
+          "inference": 3.6091772099898662,
+          "update": 2.0337278750084806
+        }
+      },
+      "gpu_before": "NVIDIA GeForce RTX 3090, 24576, 8687, 15429",
+      "gpu_after": "NVIDIA GeForce RTX 3090, 24576, 8771, 15346",
+      "correctness": {
+        "updates": 4,
+        "chats": 6,
+        "dependencies_met": true,
+        "identical_final_adapters": true
+      }
+    },
+    {
+      "policy": "burst4",
+      "repeat": 1,
+      "wall_seconds": 5.663198690992431,
+      "peak_allocated_bytes": 819701760,
+      "peak_reserved_bytes": 872415232,
+      "generated_tokens": 144,
+      "mixed_tokens_per_second": 25.42732612031402,
+      "decode_tokens_per_second": 41.92168173758638,
+      "updates_per_second": 0.7063146144531672,
+      "update_latency_seconds": [
+        0.5315691239957232,
+        3.397085007993155,
+        4.555425809987355,
+        5.0509485980001045
+      ],
+      "chats": [
+        {
+          "tokens": 24,
+          "dependency": 17,
+          "first_token_seconds": 2.352590381007758,
+          "first_token_cursor": 17,
+          "final_cursor": 17,
+          "latency_seconds": 2.8860349879978457
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 0.5778884409955936,
+          "first_token_cursor": 17,
+          "final_cursor": 17,
+          "latency_seconds": 1.1361837549920892
+        },
+        {
+          "tokens": 24,
+          "dependency": 19,
+          "first_token_seconds": 5.0867137940076645,
+          "first_token_cursor": 20,
+          "final_cursor": 20,
+          "latency_seconds": 5.652491829998326
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 1.1756104480009526,
+          "first_token_cursor": 17,
+          "final_cursor": 17,
+          "latency_seconds": 1.7082865669945022
+        },
+        {
+          "tokens": 24,
+          "dependency": 17,
+          "first_token_seconds": 3.4361393120052526,
+          "first_token_cursor": 18,
+          "final_cursor": 18,
+          "latency_seconds": 4.0115016420022584
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 1.7542385859997012,
+          "first_token_cursor": 17,
+          "final_cursor": 17,
+          "latency_seconds": 2.2940771489957115
+        }
+      ],
+      "mode_switch_seconds": {
+        "for_training": {
+          "count": 4,
+          "total": 0.040016549988649786
+        },
+        "for_inference": {
+          "count": 6,
+          "total": 0.0462375460047042
+        }
+      },
+      "scheduler": {
+        "inference_burst": 4,
+        "waiting": {
+          "inference": 0,
+          "update": 0
+        },
+        "operations": {
+          "inference": 6,
+          "update": 4
+        },
+        "wait_seconds": {
+          "inference": 8.490779656989616,
+          "update": 2.974803435994545
+        },
+        "hold_seconds": {
+          "inference": 3.587586216017371,
+          "update": 2.0743097090016818
+        }
+      },
+      "gpu_before": "NVIDIA GeForce RTX 3090, 24576, 8752, 15365",
+      "gpu_after": "NVIDIA GeForce RTX 3090, 24576, 8734, 15382",
+      "correctness": {
+        "updates": 4,
+        "chats": 6,
+        "dependencies_met": true,
+        "identical_final_adapters": true
+      }
+    },
+    {
+      "policy": "rlock",
+      "repeat": 1,
+      "wall_seconds": 5.623589912007446,
+      "peak_allocated_bytes": 830998528,
+      "peak_reserved_bytes": 872415232,
+      "generated_tokens": 144,
+      "mixed_tokens_per_second": 25.606419076279423,
+      "decode_tokens_per_second": 42.330340650403464,
+      "updates_per_second": 0.7112894187855395,
+      "update_latency_seconds": [
+        1.7411180029885145,
+        2.8146502599993255,
+        4.510207712999545,
+        5.03131980499893
+      ],
+      "chats": [
+        {
+          "tokens": 24,
+          "dependency": 21,
+          "first_token_seconds": 2.8585063070058823,
+          "first_token_cursor": 22,
+          "final_cursor": 22,
+          "latency_seconds": 3.399180175998481
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 0.05488058499759063,
+          "first_token_cursor": 20,
+          "final_cursor": 20,
+          "latency_seconds": 0.6125811309902929
+        },
+        {
+          "tokens": 24,
+          "dependency": 23,
+          "first_token_seconds": 5.075107881988515,
+          "first_token_cursor": 24,
+          "final_cursor": 24,
+          "latency_seconds": 5.622397815997829
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 0.6615611579909455,
+          "first_token_cursor": 20,
+          "final_cursor": 20,
+          "latency_seconds": 1.2140484129922697
+        },
+        {
+          "tokens": 24,
+          "dependency": 21,
+          "first_token_seconds": 3.4453486429993063,
+          "first_token_cursor": 22,
+          "final_cursor": 22,
+          "latency_seconds": 3.9895186289941194
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 1.7867298030032543,
+          "first_token_cursor": 21,
+          "final_cursor": 21,
+          "latency_seconds": 2.3141315710090566
+        }
+      ],
+      "mode_switch_seconds": {
+        "for_inference": {
+          "count": 6,
+          "total": 0.04389693598204758
+        },
+        "for_training": {
+          "count": 4,
+          "total": 0.04235080002399627
+        }
+      },
+      "scheduler": null,
+      "gpu_before": "NVIDIA GeForce RTX 3090, 24576, 8744, 15372",
+      "gpu_after": "NVIDIA GeForce RTX 3090, 24576, 8788, 15328",
+      "correctness": {
+        "updates": 4,
+        "chats": 6,
+        "dependencies_met": true,
+        "identical_final_adapters": true
+      }
+    },
+    {
+      "policy": "burst4",
+      "repeat": 2,
+      "wall_seconds": 5.599052095989464,
+      "peak_allocated_bytes": 842295296,
+      "peak_reserved_bytes": 882900992,
+      "generated_tokens": 144,
+      "mixed_tokens_per_second": 25.718639071628843,
+      "decode_tokens_per_second": 42.4036398402183,
+      "updates_per_second": 0.714406640878579,
+      "update_latency_seconds": [
+        0.5153524130000733,
+        3.398420965007972,
+        4.5077556270116474,
+        5.0147698410000885
+      ],
+      "chats": [
+        {
+          "tokens": 24,
+          "dependency": 25,
+          "first_token_seconds": 2.320323774998542,
+          "first_token_cursor": 25,
+          "final_cursor": 25,
+          "latency_seconds": 2.8922563069936587
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 0.5620001890056301,
+          "first_token_cursor": 25,
+          "final_cursor": 25,
+          "latency_seconds": 1.106717403003131
+        },
+        {
+          "tokens": 24,
+          "dependency": 27,
+          "first_token_seconds": 5.049625619998551,
+          "first_token_cursor": 28,
+          "final_cursor": 28,
+          "latency_seconds": 5.585009057991556
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 1.1424880790000316,
+          "first_token_cursor": 25,
+          "final_cursor": 25,
+          "latency_seconds": 1.6850217500032159
+        },
+        {
+          "tokens": 24,
+          "dependency": 25,
+          "first_token_seconds": 3.4319552190136164,
+          "first_token_cursor": 26,
+          "final_cursor": 26,
+          "latency_seconds": 3.9748615990101825
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 1.7279447100008838,
+          "first_token_cursor": 25,
+          "final_cursor": 25,
+          "latency_seconds": 2.2599977110075997
+        }
+      ],
+      "mode_switch_seconds": {
+        "for_training": {
+          "count": 4,
+          "total": 0.039853009991929866
+        },
+        "for_inference": {
+          "count": 6,
+          "total": 0.04436516399437096
+        }
+      },
+      "scheduler": {
+        "inference_burst": 4,
+        "waiting": {
+          "inference": 0,
+          "update": 0
+        },
+        "operations": {
+          "inference": 6,
+          "update": 4
+        },
+        "wait_seconds": {
+          "inference": 8.437899013995775,
+          "update": 2.965167243994074
+        },
+        "hold_seconds": {
+          "inference": 3.5499422370048705,
+          "update": 2.0478272730106255
+        }
+      },
+      "gpu_before": "NVIDIA GeForce RTX 3090, 24576, 8754, 15362",
+      "gpu_after": "NVIDIA GeForce RTX 3090, 24576, 8768, 15348",
+      "correctness": {
+        "updates": 4,
+        "chats": 6,
+        "dependencies_met": true,
+        "identical_final_adapters": true
+      }
+    },
+    {
+      "policy": "rlock",
+      "repeat": 2,
+      "wall_seconds": 5.830396703007864,
+      "peak_allocated_bytes": 808404992,
+      "peak_reserved_bytes": 882900992,
+      "generated_tokens": 144,
+      "mixed_tokens_per_second": 24.698147885153567,
+      "decode_tokens_per_second": 40.55769733987409,
+      "updates_per_second": 0.686059663476488,
+      "update_latency_seconds": [
+        0.5132091400009813,
+        2.8646637969941366,
+        4.659550502998172,
+        5.198728446004679
+      ],
+      "chats": [
+        {
+          "tokens": 24,
+          "dependency": 29,
+          "first_token_seconds": 2.910532295005396,
+          "first_token_cursor": 30,
+          "final_cursor": 30,
+          "latency_seconds": 3.4708385090052616
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 0.5574483549862634,
+          "first_token_cursor": 29,
+          "final_cursor": 29,
+          "latency_seconds": 1.1473457789979875
+        },
+        {
+          "tokens": 24,
+          "dependency": 31,
+          "first_token_seconds": 5.242963110998971,
+          "first_token_cursor": 32,
+          "final_cursor": 32,
+          "latency_seconds": 5.818342779006343
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 1.1838644130039029,
+          "first_token_cursor": 29,
+          "final_cursor": 29,
+          "latency_seconds": 1.734086965007009
+        },
+        {
+          "tokens": 24,
+          "dependency": 29,
+          "first_token_seconds": 3.488460003005457,
+          "first_token_cursor": 30,
+          "final_cursor": 30,
+          "latency_seconds": 4.0774976999964565
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 1.775886288000038,
+          "first_token_cursor": 29,
+          "final_cursor": 29,
+          "latency_seconds": 2.340602526004659
+        }
+      ],
+      "mode_switch_seconds": {
+        "for_training": {
+          "count": 4,
+          "total": 0.052180305996444076
+        },
+        "for_inference": {
+          "count": 6,
+          "total": 0.04526521200023126
+        }
+      },
+      "scheduler": null,
+      "gpu_before": "NVIDIA GeForce RTX 3090, 24576, 8768, 15348",
+      "gpu_after": "NVIDIA GeForce RTX 3090, 24576, 8667, 15450",
+      "correctness": {
+        "updates": 4,
+        "chats": 6,
+        "dependencies_met": true,
+        "identical_final_adapters": true
+      }
+    },
+    {
+      "policy": "burst1",
+      "repeat": 2,
+      "wall_seconds": 5.682712107998668,
+      "peak_allocated_bytes": 819701760,
+      "peak_reserved_bytes": 882900992,
+      "generated_tokens": 144,
+      "mixed_tokens_per_second": 25.3400132301817,
+      "decode_tokens_per_second": 41.93655015790478,
+      "updates_per_second": 0.7038892563939362,
+      "update_latency_seconds": [
+        0.5629273539962014,
+        1.7188913990103174,
+        2.8164815429918235,
+        3.9134554890042637
+      ],
+      "chats": [
+        {
+          "tokens": 24,
+          "dependency": 33,
+          "first_token_seconds": 3.962545335001778,
+          "first_token_cursor": 36,
+          "final_cursor": 36,
+          "latency_seconds": 4.514520040000207
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 0.614293352002278,
+          "first_token_cursor": 33,
+          "final_cursor": 33,
+          "latency_seconds": 1.197742949007079
+        },
+        {
+          "tokens": 24,
+          "dependency": 35,
+          "first_token_seconds": 5.134769848998985,
+          "first_token_cursor": 36,
+          "final_cursor": 36,
+          "latency_seconds": 5.670699132999289
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 1.75296951198834,
+          "first_token_cursor": 34,
+          "final_cursor": 34,
+          "latency_seconds": 2.3212575259967707
+        },
+        {
+          "tokens": 24,
+          "dependency": 33,
+          "first_token_seconds": 4.54552353399049,
+          "first_token_cursor": 36,
+          "final_cursor": 36,
+          "latency_seconds": 5.083594720999827
+        },
+        {
+          "tokens": 24,
+          "dependency": null,
+          "first_token_seconds": 2.8478659559914377,
+          "first_token_cursor": 35,
+          "final_cursor": 35,
+          "latency_seconds": 3.3828769940009806
+        }
+      ],
+      "mode_switch_seconds": {
+        "for_training": {
+          "count": 4,
+          "total": 0.04153586499160156
+        },
+        "for_inference": {
+          "count": 6,
+          "total": 0.04473316100484226
+        }
+      },
+      "scheduler": {
+        "inference_burst": 1,
+        "waiting": {
+          "inference": 0,
+          "update": 0
+        },
+        "operations": {
+          "inference": 6,
+          "update": 4
+        },
+        "wait_seconds": {
+          "inference": 14.647540989986737,
+          "update": 1.8159542350040283
+        },
+        "hold_seconds": {
+          "inference": 3.586056022992125,
+          "update": 2.095332320983289
+        }
+      },
+      "gpu_before": "NVIDIA GeForce RTX 3090, 24576, 8691, 15425",
+      "gpu_after": "NVIDIA GeForce RTX 3090, 24576, 8651, 15465",
+      "correctness": {
+        "updates": 4,
+        "chats": 6,
+        "dependencies_met": true,
+        "identical_final_adapters": true
+      }
+    }
+  ],
+  "notes": [
+    "Shared GPU; no other workloads stopped.",
+    "Current engine with unprioritized RLock is the control, not original-main performance.",
+    "Mode-switch timing synchronizes CUDA for every policy.",
+    "TTFT is first generated token delivered to streamer, including queue/dependency wait.",
+    "Synthetic engine workload; no learning-quality claim."
+  ]
+}
