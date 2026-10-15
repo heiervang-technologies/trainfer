@@ -5,13 +5,13 @@ and evidence of continual learning belong in `cont`.
 
 ## Acceptance checklist
 
-- [ ] Repeated train → consolidate → train cycles preserve a nonzero gradient
+- [x] Repeated train → consolidate → train cycles preserve a nonzero gradient
   path; model mutation and adapter toggles share the model lock.
-- [ ] Commit dependencies fail closed for unknown, timed-out, failed, and expired
+- [x] Commit dependencies fail closed for unknown, timed-out, failed, and expired
   work; batch admission cannot silently accept a partial training request.
-- [ ] GPU work does not block the HTTP event loop; event publication remains
+- [x] GPU work does not block the HTTP event loop; event publication remains
   ordered after task completion; shutdown does not race live model mutations.
-- [ ] Explicit scheduling controls balance inference latency with update work,
+- [x] Explicit scheduling controls balance inference latency with update work,
   preserving FIFO update ordering and avoiding starvation.
 - [ ] Consolidation has a bounded-memory alternative to dense GPU residuals,
   with quantitative preflight estimates and explicit approximation semantics.
@@ -98,3 +98,31 @@ A synthetic failing generation verifies stream termination and lock release.
 - The installed bitsandbytes backend supports CPU NF4 quantization with nested
   statistics. This is feasibility evidence for CPU consolidation, not yet a
   validated implementation or a claim about retained model quality.
+- Real concurrent-load script: 10 chats + 10 training updates passed in 4.6 s,
+  final cursor 9; observed chat latency max 3.81 s / mean 2.39 s. This is a
+  correctness smoke result on shared hardware, not a controlled speed comparison.
+  The script now explicitly waits for all accepted updates before inspecting
+  final counts. Its former assumption that all updates finish when chats finish
+  depended on synchronous event-loop blocking. It now also has a pytest entry
+  point marked `gpu`; previously invoking pytest on the file ran zero tests.
+
+## Remaining implementation constraints
+
+Compact consolidation must preserve quantization metadata and the live forward
+path, with explicit approximation/error reporting. CPU NF4 staging is feasible
+in the isolated validation environment; avoid creating a dense GPU model or
+holding both complete GPU bases during a swap. Preview should measure update
+error relative to the intended update, not merely relative to the much larger
+base weights. Activation-weighted estimates require actual representative inputs.
+
+Changing quantized base weights also changes snapshot semantics: an adapter-only
+checkpoint can no longer identify a model by its original base reference alone.
+Address base revisions and restore compatibility alongside consolidation, not
+as a later documentation caveat. Include optimizer/RNG state for explicit resume,
+while retaining intentional weights-only restore as a distinct operation.
+
+Accumulation must preserve each objective's normalization; simply splitting
+arbitrary losses is not equivalent. Expose update-procedure/optimizer extension
+points and declare supported reductions rather than silently approximating
+batch-dependent objectives. Benchmark memory and throughput over real mixed
+workloads, including consolidation, using the same hardware/model/settings.

@@ -21,6 +21,8 @@ import sys
 import tempfile
 import time
 
+import pytest
+
 os.environ.setdefault("UNSLOTH_DISABLE_STATISTICS", "1")
 
 import unsloth  # noqa: F401
@@ -97,6 +99,11 @@ async def main_async() -> int:
         extra_train_tokens = await asyncio.gather(*extra_train_tasks)
         train_tokens.extend(extra_train_tokens)
 
+        # Admission is asynchronous: chats may finish while later updates are
+        # still queued. Explicitly await every accepted update, including its
+        # error outcome, before auditing final cursor and trajectory counts.
+        await asyncio.gather(*(ctl.wait_for_commit(token) for token in train_tokens))
+
         wall = time.time() - t_start
 
         # Invariants.
@@ -150,6 +157,11 @@ async def main_async() -> int:
 
 def main() -> int:
     return asyncio.run(main_async())
+
+
+@pytest.mark.gpu
+def test_concurrent_train_and_infer():
+    assert main() == 0
 
 
 if __name__ == "__main__":
