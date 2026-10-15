@@ -64,3 +64,43 @@ def test_http_rejects_unknown_dependency_before_success_headers(tmp_path, stream
     })
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "not_found"
+
+
+def test_long_merge_waits_for_completion_without_detaching_result():
+    async def scenario():
+        c = Controller.__new__(Controller)
+        c._shutting_down = False
+        c.queue = ComputeQueue()
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def merge(task):
+            assert task.kind == "merge"
+            entered.set()
+            await release.wait()
+            return {"preview": True, "wall_seconds": 332.4}
+
+        original_wait = c.queue.wait_for
+        deadlines = []
+
+        async def record_wait(task, timeout=None):
+            deadlines.append(timeout)
+            return await original_wait(task, timeout=timeout)
+
+        c.queue.wait_for = record_wait
+        await c.queue.start(merge)
+        request = asyncio.create_task(c.request_merge(strategy="cpu_requantize", preview=True))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            assert not request.done()
+            assert deadlines == [None], "accepted long merge must not lose its result at a fixed deadline"
+            release.set()
+            response = await asyncio.wait_for(request, timeout=1)
+            assert response["result"]["wall_seconds"] == 332.4
+            assert response["commit_token"] == c.queue.committed
+        finally:
+            release.set()
+            await asyncio.gather(request, return_exceptions=True)
+            await c.queue.stop()
+
+    asyncio.run(scenario())

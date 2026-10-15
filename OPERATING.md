@@ -80,6 +80,9 @@ Override the directory at the config layer (`ServeConfig(data_dir=...)`) or via 
 ## Compact consolidation and preview
 
 `POST /v1/state/merge` without a body keeps the existing dense-residual strategy.
+Merge requests await completion without a fixed engine timeout: large-model CPU
+previews can take several minutes. Configure client/proxy timeouts accordingly.
+Disconnecting a client does not cancel an accepted queue operation.
 To estimate a compact merge without modifying the model:
 
 ```json

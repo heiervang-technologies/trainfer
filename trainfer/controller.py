@@ -858,7 +858,10 @@ class Controller:
             "max_relative_update_error": max_relative_update_error,
             "max_cpu_workspace_bytes": max_cpu_workspace_bytes,
         })
-        result = await self.queue.wait_for(task, timeout=300.0)
+        # CPU consolidation can exceed five minutes for large models. Keep
+        # the accepted operation attached to its caller until it finishes; a
+        # fixed wait timeout loses the result while mutation continues.
+        result = await self.queue.wait_for(task)
         if isinstance(result.error, ValueError):
             raise InvalidInputError(str(result.error)) from result.error
         if result.error is not None:
