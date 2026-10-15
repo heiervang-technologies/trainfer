@@ -70,3 +70,31 @@ Do not introduce learning policies or benchmark corpora from `cont`.
 Validation so far: 310 CPU tests and 15 additional shutdown/combined-objective
 tests pass using the existing torch CPU environment. These do not establish
 GPU throughput or quantization quality. Real-model tests remain outstanding.
+
+## Scheduling decision
+
+Replace the unprioritized reentrant lock with a reentrant scheduler that lets
+inference overtake updates for at most a configurable burst (default 4).
+This preserves safe whole-operation boundaries and update FIFO order while
+making the latency/progress trade-off explicit. It does not promise a hard
+latency bound or interrupt a generation/backward pass. A deterministic real
+thread contention test verifies FIFO within each class and that updates get a
+turn even when multiple inference requests wait. Another tests timeout cleanup
+and ownership. Health exposes wait/hold totals for subsequent mixed benchmarks.
+
+The streaming generation worker now sends the terminal streamer signal on an
+exception and propagates that exception to the consumer. Previously a failed
+worker could leave the consumer blocked forever while holding the model lock.
+A synthetic failing generation verifies stream termination and lock release.
+
+## Validation update
+
+- CPU tensor environment: 315 tests pass; torchless environment: 89 pass and
+  3 skip. Additional shutdown/combined-objective tests: 15 pass.
+- RTX 3090, torch 2.10.0+cu128, pinned Unsloth fork (2026.4.6), Unsloth Zoo
+  2026.4.8, Transformers 5.5.0, bitsandbytes 0.50.2: real Qwen3-0.6B merge
+  idempotence passes, as does three successive train/merge cycles with fresh
+  optimizers and nonzero gradients/LoRA B updates after each reset.
+- The installed bitsandbytes backend supports CPU NF4 quantization with nested
+  statistics. This is feasibility evidence for CPU consolidation, not yet a
+  validated implementation or a claim about retained model quality.

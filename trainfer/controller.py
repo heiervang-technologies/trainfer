@@ -25,6 +25,7 @@ from .errors import NotFoundError, TaskFailedError, TimeoutError as CommitTimeou
 from .logging_backends import LoggerConfig, MetricsLogger, flatten_scalars, get_logger
 from .queue import ComputeQueue, new_batch_id
 from .snapshot import SnapshotManager
+from .scheduling import model_operation
 from .state import ModelState
 from .ttrl_mv import TTRLPolicy, TTRLScheduler
 from .trajectory import TrajectoryLog, new_response_id
@@ -95,6 +96,7 @@ class Controller:
             lora_alpha=self.cfg.lora_alpha,
             lora_dropout=self.cfg.lora_dropout,
             load_in_4bit=self.cfg.load_in_4bit,
+            inference_burst=self.cfg.inference_burst,
         )
         if self.cfg.frozen_ref:
             self.state.load_frozen_ref()
@@ -212,7 +214,7 @@ class Controller:
     # ------------------------------------------------------------------ queue handler
     def _handle_task(self, task) -> Any:
         """All model reads and mutations serialize against generation."""
-        with self.state.mode_lock:
+        with model_operation(self.state.mode_lock, "update"):
             return self._handle_task_locked(task)
 
     def _on_task_complete(self, task) -> None:

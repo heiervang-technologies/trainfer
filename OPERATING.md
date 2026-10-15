@@ -23,6 +23,31 @@ For the *what* and *why* of trainfer, see [`trainfer/PLAN.md`](trainfer/PLAN.md)
 
 Studio consumers still read `LILE_DAEMON_URL` (and legacy `LILE_HOST` + `LILE_PORT`) from `studio/backend/routes/lile.py` in [`ht-unsloth`](https://github.com/heiervang-technologies/ht-unsloth) — point Studio at the daemon you start from this repo.
 
+## Compute scheduling and commit dependencies
+
+`--inference-burst N` (default 4) lets at most N consecutive inference operations
+run while an update is waiting. Updates retain FIFO order; inference requests
+retain order within their class. Scheduling occurs between complete generations
+and update operations, so a long generation or backward pass is not preempted.
+`/health.scheduler` reports operation counts, cumulative wait/hold time, and
+waiting requests for each class. Set N lower to favor update progress, or higher
+to favor inference under contention; benchmark your workload before tuning it.
+
+Training requests are admitted as a complete set of chunks or rejected with
+`queue_full`. An accepted request can still partially execute if a later step
+fails: there is no automatic rollback. Its final token reports any chunk failure.
+Clients should check dependency outcomes rather than infer success from the
+completion cursor alone. `/v1/wait` and dependent chat return `task_failed`
+(409), `not_found` (404), or `timeout` (504) instead of generating after an
+unsatisfied dependency. Completion history retains 1024 metadata records;
+older tokens return `commit_expired` (410). Tokens are process-local.
+
+Shutdown closes admission and drains before autosave. If an update outlives both
+the deadline and grace period, it stays tracked until it finishes; autosave is
+skipped to avoid writing an inconsistent checkpoint. Queued, unstarted work is
+resolved as dropped. A process supervisor may still need to terminate a stuck
+CUDA operation; the engine never pretends that such an operation completed.
+
 ## Ports
 
 | Port | Service | Default |

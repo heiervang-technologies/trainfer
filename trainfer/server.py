@@ -279,6 +279,10 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
             "commit_sse_subscribers": c.commits.subscriber_count,
             "commit_sse_drops": c.commits.drops,
             "replay": replay,
+            "scheduler": (
+                c.state.mode_lock.stats()
+                if c.state and hasattr(c.state.mode_lock, "stats") else None
+            ),
         }
 
     # --------------------------------------------------------------- chat

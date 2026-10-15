@@ -20,6 +20,9 @@ class ServeConfig:
 
     data_dir: Path = field(default_factory=lambda: Path("./trainfer_data"))
     max_queue_depth: int = 64
+    # Maximum consecutive inference operations while an update is waiting.
+    # Scheduling boundaries are whole generations/steps, not individual tokens.
+    inference_burst: int = 4
     max_samples_per_train_call: int = 256
     rate_limit_train_rps: float | None = None
     rate_limit_feedback_rps: float | None = None

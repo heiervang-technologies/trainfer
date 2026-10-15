@@ -15,6 +15,7 @@ import torch
 
 from ..objectives import get_objective
 from ..state import ModelState
+from ..scheduling import model_operation
 
 log = logging.getLogger(__name__)
 
@@ -139,7 +140,7 @@ class TrainEngine:
         backward + optimizer step are mutually exclusive with any concurrent
         inference on the same model. See `state.ModelState.mode_lock`.
         """
-        with self.state.mode_lock:
+        with model_operation(self.state.mode_lock, "update"):
             # Training mode + LoRA grads on.
             try:
                 from unsloth import FastLanguageModel

@@ -33,6 +33,7 @@ collect_ignore_glob: list[str] = []
 # Files that can be imported on a torchless runner. Everything else in
 # ``trainfer/tests/`` will be skipped at collection time when torch is absent.
 _TORCHLESS_OK = {
+    "test_scheduling.py",  # model scheduling is pure threading
     "test_errors.py",  # lazy trainfer.errors import inside tests
     "test_error_middleware.py",  # same; also uses FastAPI/TestClient
     "test_logging_backends.py",  # trainfer.logging_backends is lazy on heavy deps

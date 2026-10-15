@@ -128,8 +128,18 @@ def generate_chat_stream(
             skip_prompt=True,
             skip_special_tokens=True,
         )
+        errors: list[BaseException] = []
 
         def _run():
+            try:
+                _generate()
+            except BaseException as exc:
+                errors.append(exc)
+                # HF generate normally closes the streamer. On failure it may
+                # never do so, leaving the consumer holding mode_lock forever.
+                streamer.on_finalized_text("", stream_end=True)
+
+        def _generate():
             with torch.no_grad():
                 gen_kwargs: dict[str, Any] = {
                     "input_ids": input_ids,
@@ -154,3 +164,5 @@ def generate_chat_stream(
                     yield chunk
         finally:
             thread.join()
+        if errors:
+            raise errors[0]

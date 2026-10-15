@@ -64,6 +64,28 @@ def test_merge_determinism():
     print("[merge] determinism OK")
 
 
+@pytest.mark.gpu
+def test_training_restarts_after_repeated_merges():
+    """A fresh optimizer must learn after each adapter consolidation."""
+    state = ModelState.load(
+        model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
+        max_seq_length=256, lora_rank=8, lora_alpha=16,
+    )
+    engine = TrainEngine(state, lr=5e-5)
+    spec = {"objective": "sft", "samples": [{
+        "prompt": "Name a color.", "response": "Blue is a calming color.",
+    }]}
+    for _ in range(3):
+        result = engine.step(spec)
+        assert result["components"]["grad_norm_total"] > 0
+        assert any(
+            p.detach().count_nonzero().item() > 0
+            for name, p in state.model.named_parameters() if "lora_B" in name
+        )
+        state.merge_active_into_residual()
+        engine.reset_optimizer()
+
+
 def test_end_to_end_training_moves_logprob():
     """Train on a fixed (prompt, target); measure mean log-prob on the target
     before and after several steps; confirm it moved upward (loss decreased).

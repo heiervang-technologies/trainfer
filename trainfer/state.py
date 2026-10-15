@@ -40,10 +40,11 @@ import functools
 import logging
 import math
 import sys
-import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from .scheduling import ModelScheduler
 
 import torch
 import torch.nn.functional as F
@@ -155,7 +156,7 @@ class ModelState:
     # the inference fast path, the buffers vanish mid-call. Everything that
     # calls .generate() or .backward() must hold this lock across the mode flip
     # AND the work that depends on those buffers.
-    mode_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    mode_lock: Any = field(default_factory=ModelScheduler, repr=False)
     # Base-layer forward pre-hook handles (fallback path for disable_adapter).
     # Keyed by LoraLayer name; stored so we can remove/rebind without leaking.
     _residual_hook_handles: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -173,6 +174,7 @@ class ModelState:
         lora_alpha: int = 16,
         lora_dropout: float = 0.0,
         load_in_4bit: bool = True,
+        inference_burst: int = 4,
     ) -> "ModelState":
         # Install the matmul_lora residual patch before Unsloth finishes
         # binding its fast-path references. Idempotent + cached.
@@ -210,6 +212,7 @@ class ModelState:
             base_model_name=model_name,
             lora_rank=lora_rank,
             lora_alpha=lora_alpha,
+            mode_lock=ModelScheduler(inference_burst),
         )
 
     # ------------------------------------------------------------------ adapter ops
