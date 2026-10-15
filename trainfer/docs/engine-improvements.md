@@ -296,3 +296,26 @@ lock ownership, gradient cleanup, mode-switch failure propagation, and repeated
 built-in steps. Real Qwen3-0.6B passes exact next-update restoration for a
 registered momentum-SGD optimizer with a stateful two-step procedure, alongside
 the existing AdamW8bit resume case. The full CPU run passed 378 tests (one skip).
+
+## Decoder-path audit correction
+
+Review of the pinned backend found that single-token cached decoding uses
+`fast_linear_forward`/GEMV directly, bypassing `matmul_lora`. The previous
+prefill/residual test did not cover this path. Installation now also patches
+that entry point, validates its signature, and rebinds imported aliases. It
+adds the residual only for sequence length one; prefill already goes through
+the matmul wrapper and must not double-add it.
+
+Adapter reset and restore also invalidate Unsloth's cached cast `_fast_lora`
+tensors under the model lock. Updating float32 adapter Parameters alone leaves
+those bf16 decoder caches stale until a training-mode switch.
+
+CPU tests cover decoder/prefill exactly-once addition, signature drift,
+idempotence, alias rebinding, and cache invalidation. The real Qwen regression
+populates a quantized projection's decoder cache with a deliberately visible
+adapter update, then checks merge equivalence and exact snapshot restoration.
+It also checks that omitting the residual produces mean absolute output error
+greater than 1, preventing a vacuous pass on tiny updates. Both that test and
+the existing full-model residual-forward test pass. Full CPU suite: 383 pass,
+one optional-dependency skip. Mixed-workload timing must be rerun after this
+hot-path change; the earlier records are not final performance evidence.

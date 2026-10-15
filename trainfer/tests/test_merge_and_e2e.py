@@ -113,6 +113,46 @@ def test_snapshot_resume_reproduces_real_optimizer_update(tmp_path):
 
 
 @pytest.mark.gpu
+def test_cached_decoder_residual_and_snapshot_adapter_cache(tmp_path):
+    import torch
+    import unsloth.models.qwen3 as qwen
+    from trainfer.snapshot import SnapshotManager
+
+    state = ModelState.load(
+        model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
+        max_seq_length=256, lora_rank=8, lora_alpha=16,
+    )
+    projection = next(module for name, module in state.model.named_modules()
+                      if name.endswith("q_proj") and hasattr(module, "lora_A")
+                      and getattr(module.base_layer.weight, "quant_state", None) is not None)
+    a, b = projection.lora_A["default"].weight, projection.lora_B["default"].weight
+    with torch.no_grad():
+        a.fill_(0.05)
+        b.fill_(0.05)
+    manager = SnapshotManager(tmp_path)
+    manager.save("trained", state)
+    x = torch.ones(1, 1, a.shape[1], device=a.device, dtype=torch.bfloat16) * 0.1
+    with torch.no_grad():
+        before = qwen.fast_linear_forward(projection, x).clone()
+    assert hasattr(a, "_fast_lora")  # Exercise a populated, cast decoder cache.
+    state.merge_active_into_residual()
+    assert not hasattr(a, "_fast_lora")
+    with torch.no_grad():
+        after = qwen.fast_linear_forward(projection, x).clone()
+        # Compare with the unpatched decoder too: missing residual must be a
+        # material error in this test, not hidden below numerical tolerance.
+        missing = qwen.fast_linear_forward._trainfer_original(projection, x).clone()
+    torch.testing.assert_close(after, before, rtol=0.01, atol=0.03)
+    assert float((missing - before).abs().mean()) > 1.0
+    assert hasattr(a, "_fast_lora")
+    manager.load("trained", state)
+    assert not hasattr(a, "_fast_lora")
+    with torch.no_grad():
+        restored = qwen.fast_linear_forward(projection, x).clone()
+    torch.testing.assert_close(restored, before, rtol=0, atol=0)
+
+
+@pytest.mark.gpu
 def test_custom_optimizer_and_procedure_resume_on_real_model(tmp_path, monkeypatch):
     import torch
     from trainfer.engine.optimizers import OPTIMIZERS, OptimizerFactory

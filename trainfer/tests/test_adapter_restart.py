@@ -43,3 +43,13 @@ def test_null_merge_does_not_create_dense_residual():
     state.merge_active_into_residual()
     state.merge_active_into_residual()
     assert state.merged_deltas == {}
+
+
+def test_reset_and_restore_invalidate_cast_decoder_adapters():
+    state = ModelState(Adapter(), None, "synthetic", 2, 2)
+    original = state.extract_active_adapter()
+    for operation in (state.reset_active_adapter, lambda: state.load_active_adapter(original)):
+        for p in state.model.parameters():
+            p._fast_lora = p.detach().to(torch.bfloat16)
+        operation()
+        assert all(not hasattr(p, "_fast_lora") for p in state.model.parameters())

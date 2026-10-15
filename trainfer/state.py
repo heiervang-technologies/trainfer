@@ -23,6 +23,10 @@ Attaching the delta to the Parameter itself (rather than Gemini's
 survives Unsloth's ``for_training``/``for_inference`` mode flips (``id(W)``
 stays stable across those flips, empirically verified on Qwen3).
 
+Single-token cached decoding instead uses ``fast_linear_forward``/GEMV.
+That entry point is patched separately, only for sequence length one; longer
+inputs delegate to the matmul patch and must not receive the residual twice.
+
 A fallback ``forward_hook`` is also registered on ``base_layer`` so the
 standard PEFT path (used under ``model.disable_adapter()`` for the KL anchor)
 still applies the residual.
@@ -113,7 +117,7 @@ def _install_matmul_lora_patch() -> None:
 
 
 def install() -> None:
-    """Idempotent: patches unsloth's matmul_lora to honor ``W._residual_delta``.
+    """Idempotently patch prefill and cached decoding to honor residuals.
 
     Called automatically by ``ModelState.load``. External callers can invoke
     ``trainfer.install()`` explicitly to pre-warm the patch before constructing a
@@ -123,6 +127,52 @@ def install() -> None:
     ``sys.modules["unsloth.*"]``. See PR#8 review.
     """
     _install_matmul_lora_patch()
+    _install_fast_linear_patch()
+
+
+def _install_fast_linear_patch() -> None:
+    """Single-token cached decoding uses GEMV, bypassing matmul_lora."""
+    import inspect
+    import unsloth.kernels.utils as utils
+
+    original = getattr(utils, "fast_linear_forward", None)
+    if getattr(original, "_trainfer_patched", False):
+        return
+    expected = ("proj", "X", "temp_lora", "out")
+    try:
+        params = tuple(inspect.signature(original).parameters)
+    except (TypeError, ValueError):
+        params = ()
+    if params != expected:
+        raise TrainferMatmulRebindError(
+            f"unsloth fast_linear_forward signature changed (got {params}, expected {expected}); "
+            "refusing to ignore residuals during cached decoding"
+        )
+
+    def patched(proj, X, temp_lora=None, out=None):
+        result = original(proj, X, temp_lora=temp_lora, out=out)
+        # Longer inputs delegate to the already-patched matmul_lora. Adding
+        # there a second time would double the residual during prefill.
+        if X.shape[1] != 1:
+            return result
+        weight = getattr(getattr(proj, "base_layer", proj), "weight", None)
+        delta = getattr(weight, "_residual_delta", None)
+        if delta is None:
+            return result
+        return result + F.linear(X, delta.to(device=result.device, dtype=result.dtype))
+
+    patched._trainfer_patched = True
+    patched._trainfer_original = original
+    for name, module in list(sys.modules.items()):
+        if not name.startswith("unsloth"):
+            continue
+        try:
+            members = list(vars(module).items())
+        except TypeError:
+            continue
+        for attr, value in members:
+            if value is original:
+                setattr(module, attr, patched)
 
 
 @dataclass
@@ -237,6 +287,7 @@ class ModelState:
         optimizer state whenever resetting an adapter with an existing optimizer.
         """
         with self.mode_lock, torch.no_grad():
+            self.invalidate_inference_cache()
             for name, p in self.model.named_parameters():
                 if "lora_A" in name:
                     torch.nn.init.kaiming_uniform_(p, a=math.sqrt(5))
@@ -253,13 +304,24 @@ class ModelState:
         return out
 
     def load_active_adapter(self, sd: dict[str, torch.Tensor]) -> None:
-        with torch.no_grad():
+        with self.mode_lock, torch.no_grad():
+            self.invalidate_inference_cache()
             named = dict(self.model.named_parameters())
             for name, t in sd.items():
                 if name in named:
                     named[name].data.copy_(
                         t.to(named[name].dtype).to(named[name].device)
                     )
+
+    def invalidate_inference_cache(self) -> None:
+        """Call under mode_lock before changing adapters without a mode flip.
+
+        Unsloth caches cast LoRA tensors on Parameters during token decoding.
+        Copying/resetting float32 Parameters does not update their bf16 caches.
+        """
+        for parameter in self.model.parameters():
+            if hasattr(parameter, "_fast_lora"):
+                del parameter._fast_lora
 
     # ------------------------------------------------------------------ merge
     def merge_active_into_residual(self) -> None:

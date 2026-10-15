@@ -332,3 +332,10 @@ Weights-only restore, adapter reset, and consolidation clear procedure state
 with optimizer state. This extension mechanism belongs in the engine; learning
 policies, data selection, and research algorithms can remain in external
 packages such as `cont`.
+
+Residual correctness depends on two pinned Unsloth entry points:
+`matmul_lora` for prefill and `fast_linear_forward` for single-token cached
+decoding. Installation checks both signatures and rebinds imported aliases.
+Adapter reset/restore invalidate cached cast LoRA tensors so a subsequent chat
+does not observe stale adapters. The decoder regression is
+`test_cached_decoder_residual_and_snapshot_adapter_cache`.

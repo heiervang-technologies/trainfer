@@ -247,3 +247,35 @@ def test_whitelist_excludes_this_file():
         "test_matmul_lora_patch.py imports torch at module scope and MUST NOT be "
         "in _TORCHLESS_OK. Remove it from the whitelist in trainfer/tests/conftest.py."
     )
+
+
+@pytest.mark.parametrize("length", [1, 3])
+def test_decode_and_prefill_apply_residual_exactly_once(monkeypatch, length):
+    _, utils, sibling = _install_stub_unsloth(monkeypatch, _make_stub_matmul_lora())
+
+    def fast_linear_forward(proj, X, temp_lora=None, out=None):
+        if X.shape[1] != 1:
+            return utils.matmul_lora(X, proj.weight, None, None, None, 1.0, out=out)
+        return X @ proj.weight.T  # Stand-in for the bypassing GEMV kernel.
+
+    utils.fast_linear_forward = sibling.fast_linear_forward = fast_linear_forward
+    state = _fresh_install_state()
+    state.install()
+    first = utils.fast_linear_forward
+    state.install()
+    assert first is utils.fast_linear_forward is sibling.fast_linear_forward
+    proj = torch.nn.Linear(4, 3, bias=False)
+    proj.weight._residual_delta = torch.ones_like(proj.weight) * 0.1
+    x = torch.randn(2, length, 4)
+    actual = utils.fast_linear_forward(proj, x)
+    expected = x @ (proj.weight + proj.weight._residual_delta).T
+    torch.testing.assert_close(actual, expected)
+
+
+def test_decode_signature_drift_rejects_install(monkeypatch):
+    from trainfer.errors import TrainferMatmulRebindError
+
+    _, utils, _ = _install_stub_unsloth(monkeypatch, _make_stub_matmul_lora())
+    utils.fast_linear_forward = lambda weight, inputs: inputs @ weight.T
+    with pytest.raises(TrainferMatmulRebindError, match="fast_linear_forward signature"):
+        _fresh_install_state().install()
