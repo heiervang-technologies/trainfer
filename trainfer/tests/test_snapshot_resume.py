@@ -63,6 +63,17 @@ def test_weights_only_restore_drops_optimizer(tmp_path):
         manager.load("weights", state, engine=engine, resume=True)
 
 
+def test_resume_rejects_changed_model_training_configuration(tmp_path):
+    state, engine = make_engine()
+    state.training_config = {"lora_dropout": 0.0, "gradient_checkpointing": "unsloth"}
+    manager = SnapshotManager(tmp_path)
+    manager.save("resume", state, engine=engine, include_training=True)
+    state.training_config["lora_dropout"] = 0.1
+    with pytest.raises(ValueError, match="model training configuration"):
+        manager.load("resume", state, engine=engine, resume=True)
+    manager.load("resume", state, engine=engine)  # Intentional weights-only restore remains valid.
+
+
 def test_failed_overwrite_keeps_previous_snapshot(tmp_path, monkeypatch):
     from trainfer import snapshot
 

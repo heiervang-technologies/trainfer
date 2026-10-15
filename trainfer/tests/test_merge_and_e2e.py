@@ -113,6 +113,51 @@ def test_snapshot_resume_reproduces_real_optimizer_update(tmp_path):
 
 
 @pytest.mark.gpu
+@pytest.mark.parametrize("checkpointing", ["standard", "off"])
+def test_model_controls_and_memory_rejection_before_forward(tmp_path, monkeypatch, checkpointing):
+    import torch
+    from unsloth import FastLanguageModel
+    from trainfer.errors import MemoryAdmissionError
+
+    state = ModelState.load(
+        model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
+        max_seq_length=256, lora_rank=4, lora_alpha=8,
+        lora_target_modules=["q_proj", "v_proj"],
+        gradient_checkpointing=checkpointing, model_dtype="bfloat16",
+    )
+    names = [n for n, p in state.model.named_parameters() if p.requires_grad]
+    assert names and all("q_proj" in n or "v_proj" in n for n in names)
+    engine = TrainEngine(state, memory_reserve_bytes=1024**4)
+    original = state.extract_active_adapter()
+    spec = {"objective": "sft", "samples": [{"prompt": "Name a color.", "response": "Blue."}]}
+    # Inference disables gradients; admission must restore the training mode
+    # before constructing its optimizer, without evaluating a forward pass.
+    FastLanguageModel.for_inference(state.model)
+    with monkeypatch.context() as patch:
+        patch.setattr(state.model, "forward", lambda *a, **kw: pytest.fail("forward before admission"))
+        with pytest.raises(MemoryAdmissionError):
+            engine.step(spec)
+    for name, value in state.extract_active_adapter().items():
+        assert torch.equal(value, original[name])
+    assert not engine.memory.last_report["admitted"]
+    engine.memory.reserve_bytes = 256 * 1024**2
+    result = engine.step(spec)
+    assert result["components"]["grad_norm_total"] > 0
+    assert engine.memory.last_report["admitted"]
+    assert not engine.memory.last_report["activation_estimate_supplied"]
+    from trainfer.engine.inference import generate_chat
+
+    generate_chat(state.model, state.tokenizer, [{"role": "user", "content": "Name a color."}],
+                  max_new_tokens=2, temperature=0, mode_lock=state.mode_lock,
+                  memory_admission=engine.memory)
+    assert engine.memory.last_report["operation"] == "inference"
+    assert engine.memory.last_report["kv_estimate_available"]
+    engine.step(spec)
+    flags = [m.gradient_checkpointing for m in state.model.modules() if hasattr(m, "gradient_checkpointing")]
+    assert flags and all(bool(flag) == (checkpointing != "off") for flag in flags)
+
+
+@pytest.mark.gpu
 @pytest.mark.parametrize("equal_lengths", [False, True])
 def test_microbatch_accumulation_reduces_real_training_peak(tmp_path, equal_lengths):
     import torch

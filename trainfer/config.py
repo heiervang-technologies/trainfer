@@ -14,6 +14,14 @@ class ServeConfig:
     lora_alpha: int = 16
     lora_dropout: float = 0.0
     load_in_4bit: bool = True
+    lora_target_modules: list[str] = field(default_factory=lambda: [
+        "q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj",
+    ])
+    gradient_checkpointing: str = "unsloth"  # unsloth | standard | off
+    model_dtype: str = "auto"  # auto | bfloat16 | float32
+    memory_reserve_bytes: int = 256 * 1024**2
+    training_workspace_bytes: int = 0  # Caller-calibrated activation/backward budget.
+    inference_workspace_bytes: int = 0  # Additional prefill/logits/backend budget, beyond estimated KV.
 
     host: str = "127.0.0.1"
     port: int = 8000

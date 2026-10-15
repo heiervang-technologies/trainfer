@@ -97,6 +97,9 @@ class Controller:
             lora_dropout=self.cfg.lora_dropout,
             load_in_4bit=self.cfg.load_in_4bit,
             inference_burst=self.cfg.inference_burst,
+            lora_target_modules=self.cfg.lora_target_modules,
+            gradient_checkpointing=self.cfg.gradient_checkpointing,
+            model_dtype=self.cfg.model_dtype,
         )
         if self.cfg.frozen_ref:
             self.state.load_frozen_ref()
@@ -107,6 +110,9 @@ class Controller:
             per_objective_lr=self.cfg.per_objective_lr,
             default_watchlist=self.cfg.default_watchlist,
             optimizer_class=self.cfg.optimizer,
+            memory_reserve_bytes=self.cfg.memory_reserve_bytes,
+            training_workspace_bytes=self.cfg.training_workspace_bytes,
+            inference_workspace_bytes=self.cfg.inference_workspace_bytes,
         )
         # Stamp run-level params into the external logger once the state is
         # loaded; NullLogger swallows this, real backends record it as
@@ -316,6 +322,7 @@ class Controller:
                 return report
             if strategy != "residual" or payload.get("preview"):
                 raise ValueError("preview requires strategy=cpu_requantize; unknown merge strategy")
+            self.train_engine.memory.residual_merge(self.state)
             self.state.merge_active_into_residual()
             self.train_engine.reset_optimizer()
             return {
@@ -429,6 +436,7 @@ class Controller:
                         self.state.tokenizer,
                         messages,
                         mode_lock=self.state.mode_lock,
+                        memory_admission=getattr(self.train_engine, "memory", None),
                         **kwargs,
                     )
             return generate_chat(
@@ -436,6 +444,7 @@ class Controller:
                 self.state.tokenizer,
                 messages,
                 mode_lock=self.state.mode_lock,
+                memory_admission=getattr(self.train_engine, "memory", None),
                 **kwargs,
             )
 
@@ -505,6 +514,7 @@ class Controller:
                         self.state.tokenizer,
                         messages,
                         mode_lock=self.state.mode_lock,
+                        memory_admission=getattr(self.train_engine, "memory", None),
                         **kwargs,
                     ):
                         asyncio.run_coroutine_threadsafe(q.put(chunk), loop)

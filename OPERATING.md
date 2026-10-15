@@ -191,3 +191,56 @@ retry or automatic adjustment of microbatch size. A failure before the optimizer
 step clears partial gradients and propagates through the commit token. As with
 ordinary training, an optimizer failure after it begins mutating parameters is
 not transactionally rolled back.
+
+## Memory admission and adapter controls
+
+The CLI exposes these model-loading choices:
+
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `--lora-rank`, `--lora-alpha` | 16, 16 | Adapter capacity and scaling; rank changes parameter, gradient, and optimizer storage. |
+| `--lora-dropout` | 0 | Adapter dropout; affects reproducibility and supported fast kernels. |
+| `--lora-target-modules q_proj v_proj` | All seven attention/MLP projections | Select adapted projections; fewer targets reduce adapter storage and computation but change the optimization space. |
+| `--gradient-checkpointing` | `unsloth` | `unsloth`, `standard`, or `off`; off trades additional activation storage for avoiding recomputation. |
+| `--model-dtype` | `auto` | `auto`, `bfloat16`, or `float32`, forwarded to the backend. Compatibility depends on model/hardware. |
+| `--no-4bit` | 4-bit loading enabled | Request dense base loading; an already quantized checkpoint may retain its own quantization configuration. |
+
+The engine preserves checkpointing selection across train/inference switches,
+including candidate generation in CCD/CCPD. Snapshots with training state check
+these model training settings on resume. A mismatch rejects resume; intentional
+weights-only restore remains available where tensor geometry matches. Older
+training snapshots without configuration metadata cannot establish matching
+settings for a newly loaded model and require weights-only restore.
+Backend-created non-LoRA trainable parameters (such as full embedding tables)
+reject loading because the adapter snapshot/reset contract does not cover them.
+
+Memory admission runs under the model lock immediately before a training
+forward, chat generation, or residual merge. It uses driver free bytes plus
+unused PyTorch reserved bytes, and keeps `--memory-reserve-mib` (default 256)
+uncommitted. It does not reserve GPU memory against other processes.
+
+- Training estimates missing gradient storage and lazy AdamW/AdamW8bit/Lion8bit
+  state, respecting bitsandbytes precision overrides and small-tensor rules.
+  `--training-workspace-mib` adds a caller-calibrated activation/backward budget.
+- Chat estimates a full dense decoder KV cache from model geometry, input and
+  output lengths, and a 256-token growth allowance. `--inference-workspace-mib`
+  adds a caller-calibrated prefill/logits/backend workspace budget. Architectures
+  without the required geometry report the KV estimate as unavailable.
+- Residual merge budgets new bf16 copies plus dense per-layer workspace. It
+  does not automatically switch to lossy requantization when rejected.
+
+Both workspace budgets default to zero: **passing admission does not prove the
+workload fits**. Unknown objective activations, internal objective rollouts,
+backend scratch, fragmentation, and other processes can still cause OOM.
+Snapshot restore and direct low-level state operations do not use these
+execution guards. Calibrate workspace for the actual model, objective, sequence
+length, and batch/microbatch shape; changing them can invalidate that budget.
+No admission decision reduces tokens, samples, or model capacity silently.
+
+`/health.memory_admission` reports configured budgets and the last execution
+check, including whether optimizer/KV estimates were available and whether a
+training activation budget was supplied. Direct admission rejection uses
+`memory_admission` (503); an accepted training task that fails execution-time
+admission is a failed commit under the existing commit contract. Stream errors
+after headers use the existing streaming error event. CPU work bypasses CUDA
+capacity checks.

@@ -82,7 +82,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     model: str | None = None
     messages: list[ChatMessage]
-    max_tokens: int | None = 256
+    max_tokens: int | None = Field(default=256, gt=0)
     temperature: float = 0.7
     top_p: float = 0.95
     stream: bool = False
@@ -293,6 +293,14 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
             "commit_sse_subscribers": c.commits.subscriber_count,
             "commit_sse_drops": c.commits.drops,
             "replay": replay,
+            "memory_admission": {
+                "reserve_bytes": cfg.memory_reserve_bytes,
+                "training_workspace_bytes": cfg.training_workspace_bytes,
+                "inference_workspace_bytes": cfg.inference_workspace_bytes,
+                "last_execution_check": (
+                    c.train_engine.memory.last_report if c.train_engine is not None else None
+                ),
+            },
             "scheduler": (
                 c.state.mode_lock.stats()
                 if c.state and hasattr(c.state.mode_lock, "stats") else None

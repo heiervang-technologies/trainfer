@@ -34,6 +34,7 @@ ERROR_CODES: frozenset[str] = frozenset(
         "timeout",
         "commit_expired",
         "task_failed",
+        "memory_admission",
         "internal",
     }
 )
@@ -56,6 +57,12 @@ class InvalidInputError(TrainferError):
     code = "invalid_input"
     status_code = 400
     retryable = False
+
+
+class MemoryAdmissionError(TrainferError):
+    code = "memory_admission"
+    status_code = 503
+    retryable = True
 
 
 class UnknownObjectiveError(TrainferError):

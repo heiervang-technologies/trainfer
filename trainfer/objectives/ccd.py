@@ -193,7 +193,9 @@ def ccd_loss(
         try:
             from unsloth import FastLanguageModel
 
-            FastLanguageModel.for_training(model)
+            FastLanguageModel.for_training(
+                model, use_gradient_checkpointing=getattr(model, "_trainfer_gradient_checkpointing", True),
+            )
         except Exception:
             pass
 

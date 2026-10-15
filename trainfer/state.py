@@ -154,6 +154,8 @@ class ModelState:
     # When set, objectives consume it as ``pi_ref`` for KL anchoring instead
     # of falling back to ``model.disable_adapter()`` on the live model.
     frozen_ref: Any = field(default=None, repr=False)
+    # Runtime choices affecting training replay, persisted for resume checks.
+    training_config: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def load(
@@ -165,7 +167,23 @@ class ModelState:
         lora_dropout: float = 0.0,
         load_in_4bit: bool = True,
         inference_burst: int = 4,
+        lora_target_modules: list[str] | None = None,
+        gradient_checkpointing: str = "unsloth",
+        model_dtype: str = "auto",
     ) -> "ModelState":
+        if lora_rank < 1 or lora_alpha < 1 or max_seq_length < 1:
+            raise ValueError("rank, alpha, and sequence length must be positive")
+        if not 0 <= lora_dropout < 1:
+            raise ValueError("lora_dropout must be in [0, 1)")
+        targets = list(lora_target_modules) if lora_target_modules is not None else [
+            "q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj",
+        ]
+        if not targets or any(not isinstance(name, str) or not name.strip() for name in targets):
+            raise ValueError("lora_target_modules must contain nonempty module names")
+        checkpoints = {"unsloth": "unsloth", "standard": True, "off": False}
+        dtypes = {"auto": None, "bfloat16": torch.bfloat16, "float32": torch.float32}
+        if gradient_checkpointing not in checkpoints or model_dtype not in dtypes:
+            raise ValueError("unsupported gradient checkpointing or model dtype")
         # Install the matmul_lora residual patch before Unsloth finishes
         # binding its fast-path references. The live callable's sentinel makes
         # this idempotent without caching success for a replaced backend.
@@ -177,26 +195,26 @@ class ModelState:
             model_name=model_name,
             max_seq_length=max_seq_length,
             load_in_4bit=load_in_4bit,
-            dtype=None,
+            dtype=dtypes[model_dtype],
         )
         # Qwen3 series: target the standard LoRA attention+MLP set.
         model = FastLanguageModel.get_peft_model(
             model,
             r=lora_rank,
-            target_modules=[
-                "q_proj",
-                "k_proj",
-                "v_proj",
-                "o_proj",
-                "gate_proj",
-                "up_proj",
-                "down_proj",
-            ],
+            target_modules=targets,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             bias="none",
-            use_gradient_checkpointing="unsloth",
+            use_gradient_checkpointing=checkpoints[gradient_checkpointing],
         )
+        model._trainfer_gradient_checkpointing = gradient_checkpointing != "off"
+        unsupported = [name for name, parameter in model.named_parameters()
+                       if parameter.requires_grad and "lora_A" not in name and "lora_B" not in name]
+        if unsupported:
+            raise ValueError(
+                "backend enabled non-LoRA trainable parameters that adapter snapshots cannot preserve: "
+                + ", ".join(unsupported[:5])
+            )
         return cls(
             model=model,
             tokenizer=tokenizer,
@@ -204,6 +222,11 @@ class ModelState:
             lora_rank=lora_rank,
             lora_alpha=lora_alpha,
             mode_lock=ModelScheduler(inference_burst),
+            training_config={
+                "max_seq_length": max_seq_length, "lora_dropout": lora_dropout,
+                "target_modules": sorted(targets), "gradient_checkpointing": gradient_checkpointing,
+                "model_dtype": model_dtype, "load_in_4bit": load_in_4bit,
+            },
         )
 
     # ------------------------------------------------------------------ adapter ops

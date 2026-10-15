@@ -36,6 +36,9 @@ class TrainEngine:
         per_objective_lr: dict[str, float] | None = None,
         default_watchlist: list[int] | None = None,
         optimizer_class: str = "adamw8bit",
+        memory_reserve_bytes: int = 256 * 1024**2,
+        training_workspace_bytes: int = 0,
+        inference_workspace_bytes: int = 0,
     ) -> None:
         self.state = state
         self.lr = lr
@@ -48,6 +51,9 @@ class TrainEngine:
         # safety-monitor-primitive.md.
         self.default_watchlist: list[int] = list(default_watchlist or [])
         self.optimizer_class = optimizer_class
+        from ..memory import MemoryAdmission
+
+        self.memory = MemoryAdmission(memory_reserve_bytes, training_workspace_bytes, inference_workspace_bytes)
         # Map objective_name -> optimizer. When per_objective=False, the only
         # key is _SHARED_KEY and every step reuses it. When True, each
         # objective gets its own torch.optim.Optimizer so Adam m/v stay isolated
@@ -150,10 +156,19 @@ class TrainEngine:
             try:
                 from unsloth import FastLanguageModel
 
-                FastLanguageModel.for_training(self.state.model)
+                checkpointing = getattr(self.state, "training_config", {}).get("gradient_checkpointing", "unsloth")
+                FastLanguageModel.for_training(
+                    self.state.model, use_gradient_checkpointing=checkpointing != "off",
+                )
             except Exception:
                 pass
             self.state.model.train()
+
+            # Inference may disable adapter gradients. Restore training mode
+            # before constructing an optimizer, but admit before any forward.
+            if next(self.state.model.parameters()).device.type == "cuda":
+                opt_key = _SHARED_KEY if spec.get("objectives") else spec["objective"]
+                self.memory.training(self.state.model, self._optimizer(opt_key))
 
             if microbatches is not None:
                 return self._step_accumulated(spec, microbatches)

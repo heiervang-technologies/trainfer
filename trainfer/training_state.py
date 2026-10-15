@@ -53,6 +53,7 @@ def export_training(engine):
 
     return {
         "version": 1,
+        "model_training_config": dict(getattr(engine.state, "training_config", {})),
         "frozen_reference": engine.state.frozen_ref is not None,
         "parameters": [(n, list(p.shape)) for n, p in engine.state.model.named_parameters() if p.requires_grad],
         "config": {
@@ -80,6 +81,8 @@ def validate_training(engine, saved):
 
     if saved.get("version") != 1:
         raise ValueError("unsupported training-state version")
+    if saved.get("model_training_config", {}) != getattr(engine.state, "training_config", {}):
+        raise ValueError("model training configuration differs; use weights-only restore")
     names = [(n, list(p.shape)) for n, p in engine.state.model.named_parameters() if p.requires_grad]
     if saved["parameters"] != names:
         raise ValueError("trainable parameter names/order/shapes differ from snapshot")

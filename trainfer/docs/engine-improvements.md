@@ -220,3 +220,44 @@ one. The CPU full-batch comparison independently verifies reduction semantics.
 
 Memory admission, broader model/adapter controls, general update/optimizer
 extension points, and mixed-workload comparative benchmarks remain outstanding.
+
+## Memory admission and model controls
+
+Execution-time admission now checks driver free memory plus reusable allocator
+reserve while holding the model lock. Training budgets missing gradients, lazy
+built-in optimizer state, and an explicit caller-calibrated workspace. Chat
+budgets a dense decoder KV estimate and an explicit extra workspace. Dense
+merge budgets residual copies plus per-layer temporaries. Rejection never
+silently changes data or selects a lossy strategy. The default 256 MiB reserve
+is headroom, not a workload-fit guarantee; zero workspace budgets leave
+activation/prefill costs unknown. Health makes these limitations observable.
+Snapshot restore/direct state operations are not covered by these guards.
+
+Rank/alpha/dropout, target projections, checkpointing mode, and base dtype are
+now CLI choices. Unsloth's for_training defaults would re-enable checkpointing,
+so engine and CCD/CCPD mode restoration explicitly preserve off. Resume checks
+persisted model training settings. Backend-created non-LoRA trainable weights
+are rejected because existing adapter snapshot/reset semantics cannot preserve
+them. Fewer adapted projections reduce memory but also change the space of
+possible updates; this is an explicit user choice, not an automatic compromise.
+
+CPU coverage includes lazy-state estimates, existing gradients, reserve
+rejection, existing/new residuals, KV geometry with grouped-query attention,
+CPU bypass, cached versus driver memory, pre-generation rejection in both chat
+paths, mode-lock release, CLI validation, backend argument propagation, and
+resume incompatibility. RTX 3090 Qwen3-0.6B tests pass with q/v-only rank-4 LoRA,
+bf16 loading, standard and disabled checkpointing, forced rejection before
+forward with unchanged adapters, subsequent training, inference, then training
+again. The concurrent ten-chat/ten-update test also passes with these guards
+enabled. Real AdamW8bit snapshot resume passes after adding config checks.
+
+This implements resource controls, not yet a calibrated largest-model capacity
+study. The broader memory/capacity acceptance item remains open pending that
+evidence and the final coverage audit.
+
+Validation for this phase: 362 CPU tests passed (one optional-dependency skip),
+95 torchless tests passed (three skips), and 38 focused CPU control/resume/CLI
+tests passed. The final GPU-environment bundle passed 29 tests (two real-model
+configuration cases plus CPU memory/resume tests); the separate concurrency
+bundle passed both configuration cases and the real concurrent workload.
+Changed-file Ruff and whitespace checks pass.
