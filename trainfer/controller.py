@@ -89,6 +89,11 @@ class Controller:
 
     # ------------------------------------------------------------------ lifecycle
     async def start(self) -> None:
+        from .engine.extensions import load_extensions
+        from .engine.optimizers import get_optimizer
+
+        await asyncio.to_thread(load_extensions)
+        get_optimizer(self.cfg.optimizer)
         self.state = ModelState.load(
             model_name=self.cfg.model,
             max_seq_length=self.cfg.max_seq_length,
@@ -110,6 +115,7 @@ class Controller:
             per_objective_lr=self.cfg.per_objective_lr,
             default_watchlist=self.cfg.default_watchlist,
             optimizer_class=self.cfg.optimizer,
+            optimizer_kwargs=self.cfg.optimizer_kwargs,
             memory_reserve_bytes=self.cfg.memory_reserve_bytes,
             training_workspace_bytes=self.cfg.training_workspace_bytes,
             inference_workspace_bytes=self.cfg.inference_workspace_bytes,
@@ -240,6 +246,8 @@ class Controller:
         objective = payload.get("objective") or "multi[" + "+".join(
             sorted({o["name"] for o in payload.get("objectives", [])})
         ) + "]"
+        if payload.get("procedure", "gradient") != "gradient":
+            objective = "procedure:" + payload["procedure"]
         self.commits.broadcast_commit(
             cursor=task.token,
             objective=objective,
@@ -260,6 +268,8 @@ class Controller:
                 # readers don't see "unknown" for every multi step.
                 names = [o.get("name", "?") for o in payload["objectives"]]
                 objective = "multi[" + "+".join(sorted(set(names))) + "]"
+            if payload.get("procedure", "gradient") != "gradient":
+                objective = "procedure:" + payload["procedure"]
             try:
                 result = self.train_engine.step(payload)
             except BaseException as exc:
@@ -607,15 +617,25 @@ class Controller:
           — runs as ONE queue task. Per-objective samples may differ; the
           engine combines them in a single backward pass. Caller is responsible
           for batching upstream if rollouts get large.
+        - Registered custom procedure: one queue task regardless of chunk_size;
+          the procedure owns its internal iteration and validates its inputs.
         """
         self._reject_if_shutting_down()
+        procedure = spec.get("procedure", "gradient")
+        if procedure != "gradient":
+            from .engine.procedures import get_procedure
+
+            try:
+                get_procedure(procedure).validate(spec)
+            except (ValueError, KeyError, TypeError) as exc:
+                raise InvalidInputError(str(exc)) from exc
         has_obj = "objective" in spec and spec.get("objective")
         has_objs = "objectives" in spec and spec.get("objectives")
         if has_obj and has_objs:
             raise ValueError(
                 "submit_train: set exactly one of 'objective' or 'objectives'"
             )
-        if not has_obj and not has_objs:
+        if procedure == "gradient" and not has_obj and not has_objs:
             raise ValueError("submit_train: must set 'objective' or 'objectives'")
 
         total_samples = 0
@@ -634,7 +654,7 @@ class Controller:
                 f"batch_too_large: request has {total_samples} samples, cap is {max_samples}"
             )
 
-        if spec.get("microbatch_size") is not None:
+        if procedure == "gradient" and spec.get("microbatch_size") is not None:
             from .engine.accumulation import plan
 
             try:
@@ -658,8 +678,8 @@ class Controller:
                 return {"queue_pressure": "high"}
             return {}
 
-        if has_objs:
-            # Multi-objective: don't chunk — one combined-loss step.
+        if has_objs or procedure != "gradient":
+            # Combined loss/custom procedures each own one complete update.
             t = await self.queue.try_submit("train", dict(spec), batch_id=batch_id)
             return {
                 "batch_id": batch_id,

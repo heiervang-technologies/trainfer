@@ -244,3 +244,91 @@ training activation budget was supplied. Direct admission rejection uses
 admission is a failed commit under the existing commit contract. Stream errors
 after headers use the existing streaming error event. CPU work bypasses CUDA
 capacity checks.
+
+## Optimization extensions
+
+Installed, trusted packages can register optimizers, update procedures, and
+accumulation reductions from a zero-argument entry point:
+
+```toml
+[project.entry-points."trainfer.extensions"]
+my_methods = "my_package.trainfer_plugin:register"
+```
+
+Registration runs before model loading and worker startup. A registration
+failure stops startup. HTTP requests select registered names; they never supply
+Python import paths. Restart after adding/changing installed extensions.
+
+An optimizer registrar can use:
+
+```python
+from trainfer.engine.optimizers import register_optimizer
+from torch.optim import SGD
+
+register_optimizer("momentum_sgd", SGD, version="1")
+```
+
+Select it with `--optimizer momentum_sgd --optimizer-kwargs '{"momentum":0.9}'`.
+A factory receives the live trainable parameters, `lr`, and configured keyword
+arguments. It must return a torch optimizer owning exactly those parameters,
+without copying/replacing them, and must accept CPU parameters for snapshot
+preflight. Multiple parameter groups are allowed; resume checks group order as
+well as factory version and resolved optimizer class. `lr`/`params` cannot be
+overridden through the kwargs object. Bump the factory version when changing
+state interpretation. An optional `estimate_state_bytes(optimizer)` callback
+returns nonnegative integer bytes for future state allocation; it must be pure
+and must not allocate model workspace. Without it, unknown optimizer state
+costs remain explicitly unestimated in memory admission.
+
+Built-ins are `adamw`, `sgd`, and the historical `adamw8bit`/`lion8bit` names.
+For compatibility, the latter fall back to torch AdamW with a warning when
+bitsandbytes cannot be imported; constructor/runtime failures propagate.
+Per-objective mode retains its historical plain AdamW behavior for those two
+names. Custom factories can declare `supports_per_objective=False` to reject
+multiple optimizer instances over shared parameters. Otherwise each objective
+gets its own instance and configured objective LR. Explicit `adamw` and `sgd`
+have no algorithm fallback; the resolved class is checked on resume.
+
+For algorithms beyond loss composition, register a procedure:
+
+```python
+from trainfer.engine.procedures import register_procedure
+
+register_procedure("my_update", MyProcedure, validate=validate_request, version="1")
+```
+
+`MyProcedure()` must expose synchronous methods:
+
+- `run(engine, spec)` performs the update on `engine.state.model` and returns
+  `{"loss": float_or_none, "components": {...}}`, optionally with `skipped`.
+  Results must be finite JSON data, with no tensors or retained autograd graphs.
+- `state_dict()` returns its private algorithm state as tensors and primitive
+  containers, without side effects. It must not include a second model.
+- `load_state_dict(saved)` validates and restores CPU state without touching
+  the live model. Factories/state loading run independently during preflight.
+
+`validate_request(spec)` must be pure, inexpensive, and reject invalid shapes,
+unsupported options, or unbounded iterations before queue admission. Send
+`{"procedure":"my_update","procedure_kwargs":{...},"samples":[...]}` to
+`/v1/train`; objective fields are optional for custom procedures. The procedure
+owns one queue task/commit regardless of `chunk_size`, and owns its internal
+iteration semantics. It may call `engine.gradient_step(spec)` repeatedly to
+reuse registered losses, microbatching, clipping, optimizer state, and memory
+admission, or implement a derivative-free/other update directly. Direct custom
+allocations must call the memory guard with an appropriate workspace estimate.
+
+The engine switches to training mode (invalidating fast-inference adapter
+caches), then holds the shared model lock for the whole procedure. Long
+procedures therefore delay inference until they return. Procedures must not
+submit/wait on queue work, start another model, or mutate outside that lock.
+Canonical events identify them as `procedure:<name>`. Errors fail the commit and
+clear partial gradients, but do not roll back completed internal updates.
+
+Resumable snapshots persist procedure versions/state alongside optimizer
+factory versions, options, parameter groups, moments, and RNG. Compatibility
+checks run before live weight changes and preserve live RNG even when plugin
+constructors consume randomness. Missing or changed versions reject resume.
+Weights-only restore, adapter reset, and consolidation clear procedure state
+with optimizer state. This extension mechanism belongs in the engine; learning
+policies, data selection, and research algorithms can remain in external
+packages such as `cont`.

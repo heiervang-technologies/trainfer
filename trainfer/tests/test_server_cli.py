@@ -72,6 +72,16 @@ def test_memory_and_adapter_controls():
     assert cfg.training_workspace_bytes == 512 * 1024**2
 
 
+def test_optimizer_name_and_options_are_passed_without_importing_plugins():
+    from trainfer.cli import parse_cli_args
+
+    cfg = parse_cli_args(["--optimizer", "installed_plugin", "--optimizer-kwargs", '{"momentum":0.9}'])
+    assert cfg.optimizer == "installed_plugin"
+    assert cfg.optimizer_kwargs == {"momentum": 0.9}
+    with pytest.raises(SystemExit):
+        parse_cli_args(["--optimizer-kwargs", "[]"])
+
+
 @pytest.mark.parametrize("args", [["--lora-rank", "0"], ["--lora-alpha", "0"],
                                   ["--lora-dropout", "1"], ["--memory-reserve-mib", "-1"],
                                   ["--training-workspace-mib", "-1"]])

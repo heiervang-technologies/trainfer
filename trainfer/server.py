@@ -136,6 +136,8 @@ class ObjectiveSpec(BaseModel):
 
 
 class TrainRequest(BaseModel):
+    procedure: str = "gradient"
+    procedure_kwargs: dict[str, Any] = Field(default_factory=dict)
     objective: str | None = None
     objectives: list[ObjectiveSpec] | None = None
     samples: list[dict[str, Any]] = Field(default_factory=list)

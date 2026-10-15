@@ -17,7 +17,7 @@ and evidence of continual learning belong in `cont`.
   with quantitative preflight estimates and explicit approximation semantics.
 - [ ] Memory admission, microbatch accumulation, and model/adapter configuration
   support training near capacity without changing the intended update silently.
-- [ ] Update procedures and optimizers have documented extension points beyond
+- [x] Update procedures and optimizers have documented extension points beyond
   the built-in loss registry.
 - [x] Snapshots distinguish weight restore from resumable optimization state,
   avoid stale files, and validate restore compatibility.
@@ -261,3 +261,38 @@ tests passed. The final GPU-environment bundle passed 29 tests (two real-model
 configuration cases plus CPU memory/resume tests); the separate concurrency
 bundle passed both configuration cases and the real concurrent workload.
 Changed-file Ruff and whitespace checks pass.
+
+## Optimizer and update-procedure extensions
+
+Trusted installed packages register through `trainfer.extensions` before model
+load. Optimizer factories are selected by configured name, receive the live
+parameters and JSON kwargs, and may provide memory estimates. Factory versions,
+resolved classes, options, and exact parameter-group ordering are checked on
+resume. Unknown names reject rather than silently selecting AdamW. Historical
+8-bit dependency-absence/per-objective fallbacks remain documented for
+compatibility; constructor/runtime failures now propagate.
+
+Update procedures are distinct from losses. A procedure can implement a
+derivative-free update or compose several `engine.gradient_step` calls. It owns
+one queue task/commit and executes under the same model lock after invalidating
+inference adapter caches. Pure validation runs before admission; trajectory/SSE
+events name the procedure. Result metadata must be finite JSON without tensors
+or retained graphs. Errors clear gradients and fail the commit; prior internal
+updates are not rolled back. Long procedures delay inference for their whole
+duration, so external learning policies choose the update-cycle granularity.
+
+Procedure state and versions participate in resumable snapshots, while
+weights-only restore and consolidation clear them. CPU preflight protects live
+RNG even if plugin constructors consume randomness. Plugin state must use
+portable tensors/primitive containers and validate independently of the model.
+Direct custom allocations need a declared memory estimate; arbitrary trusted
+Python algorithms cannot be automatically bounded by the engine.
+
+Validation covers CPU optimizer/procedure resume equivalence, version and
+parameter-order mismatches before mutation, RNG preservation on failed
+preflight, copied-parameter rejection, separate per-objective instances,
+memory callbacks, registration failure/idempotence, one-commit worker execution,
+lock ownership, gradient cleanup, mode-switch failure propagation, and repeated
+built-in steps. Real Qwen3-0.6B passes exact next-update restoration for a
+registered momentum-SGD optimizer with a stateful two-step procedure, alongside
+the existing AdamW8bit resume case. The full CPU run passed 378 tests (one skip).

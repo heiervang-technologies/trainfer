@@ -51,6 +51,7 @@ def restore_rng(saved):
 def export_training(engine):
     from .objectives.kto import _Z0_EMA
 
+    parameter_names = {id(p): n for n, p in engine.state.model.named_parameters()}
     return {
         "version": 1,
         "model_training_config": dict(getattr(engine.state, "training_config", {})),
@@ -62,21 +63,38 @@ def export_training(engine):
             "per_objective": engine.per_objective,
             "per_objective_lr": engine.per_objective_lr,
             "optimizer_class": engine.optimizer_class,
+            "optimizer_kwargs": engine.optimizer_kwargs,
             "default_watchlist": engine.default_watchlist,
         },
         "optimizers": {
             key: {
                 "class": type(opt).__module__ + "." + type(opt).__qualname__,
+                "factory": getattr(opt, "_trainfer_factory", None),
+                "parameter_names": [[parameter_names[id(p)] for p in group["params"]]
+                                    for group in opt.param_groups],
                 "state": cpu_tree(opt.state_dict()),
             }
             for key, opt in engine._opts.items()
         },
+        "procedures": {name: {"version": engine._procedure_versions[name],
+                               "state": cpu_tree(procedure.state_dict())}
+                       for name, procedure in engine._procedures.items()},
         "kto_ema": [(beta, value) for (model_id, beta), value in _Z0_EMA.items() if model_id == id(engine.state.model)],
         "rng": rng_state(),
     }
 
 
 def validate_training(engine, saved):
+    # Custom optimizer/procedure constructors may initialize random state.
+    # Preflight must not perturb the live RNG, including on rejection.
+    previous_rng = rng_state()
+    try:
+        _validate_training(engine, saved)
+    finally:
+        restore_rng(previous_rng)
+
+
+def _validate_training(engine, saved):
     from .engine.train import TrainEngine
 
     if saved.get("version") != 1:
@@ -91,12 +109,21 @@ def validate_training(engine, saved):
         "per_objective": engine.per_objective,
         "per_objective_lr": engine.per_objective_lr,
         "optimizer_class": engine.optimizer_class,
+        "optimizer_kwargs": engine.optimizer_kwargs,
         "default_watchlist": engine.default_watchlist,
     }
-    if saved["config"] != current:
+    saved_config = {"optimizer_kwargs": {}, **saved["config"]}
+    if saved_config != current:
         raise ValueError("optimizer configuration differs; use weights-only restore or matching configuration")
     if saved["frozen_reference"] != (engine.state.frozen_ref is not None):
         raise ValueError("frozen-reference configuration differs from training snapshot")
+    from .engine.procedures import get_procedure
+
+    for name, record in saved.get("procedures", {}).items():
+        registration = get_procedure(name)
+        if registration.version != record["version"]:
+            raise ValueError(f"update procedure version differs for {name!r}")
+        registration.create().load_state_dict(cpu_tree(record["state"]))
     if saved["rng"]["cuda"] and (
         not torch.cuda.is_available() or len(saved["rng"]["cuda"]) != torch.cuda.device_count()
     ):
@@ -104,6 +131,7 @@ def validate_training(engine, saved):
     # Validate optimizer state on CPU parameters before touching live weights.
     # This neither duplicates the base model nor allocates another GPU optimizer.
     params = [torch.nn.Parameter(torch.empty(tuple(shape))) for _, shape in names]
+    parameter_names = {id(p): name for p, (name, _) in zip(params, names)}
 
     class Parameters:
         def parameters(self):
@@ -114,9 +142,14 @@ def validate_training(engine, saved):
     candidate = TrainEngine(SimpleNamespace(model=Parameters()), **saved["config"])
     for key, record in saved["optimizers"].items():
         opt = candidate._optimizer(key)
+        if record.get("factory") is not None and record["factory"] != getattr(opt, "_trainfer_factory", None):
+            raise ValueError(f"optimizer factory version differs for {key!r}")
+        groups = [[parameter_names[id(p)] for p in group["params"]] for group in opt.param_groups]
+        if record.get("parameter_names", groups) != groups:
+            raise ValueError(f"optimizer parameter group order differs for {key!r}")
         if type(opt).__module__ + "." + type(opt).__qualname__ != record["class"]:
             raise ValueError(f"optimizer implementation differs for {key!r}")
-        opt.load_state_dict(record["state"])
+        opt.load_state_dict(cpu_tree(record["state"]))
         # Most torch optimizers defer checking moment geometry until step().
         for parameter, values in opt.state.items():
             for field in ("exp_avg", "exp_avg_sq", "max_exp_avg_sq", "momentum_buffer"):
@@ -127,10 +160,16 @@ def validate_training(engine, saved):
 
 def restore_training(engine, saved):
     from .objectives.kto import _Z0_EMA
+    from .engine.procedures import get_procedure
 
     engine.reset_optimizer()
     for key, record in saved["optimizers"].items():
         engine._optimizer(key).load_state_dict(record["state"])
+    for name, record in saved.get("procedures", {}).items():
+        procedure = get_procedure(name).create()
+        procedure.load_state_dict(cpu_tree(record["state"]))
+        engine._procedures[name] = procedure
+        engine._procedure_versions[name] = record["version"]
     for beta, value in saved["kto_ema"]:
         _Z0_EMA[(id(engine.state.model), beta)] = value
     restore_rng(saved["rng"])

@@ -113,6 +113,55 @@ def test_snapshot_resume_reproduces_real_optimizer_update(tmp_path):
 
 
 @pytest.mark.gpu
+def test_custom_optimizer_and_procedure_resume_on_real_model(tmp_path, monkeypatch):
+    import torch
+    from trainfer.engine.optimizers import OPTIMIZERS, OptimizerFactory
+    from trainfer.engine.procedures import PROCEDURES, ProcedureFactory
+    from trainfer.snapshot import SnapshotManager
+
+    class TwoSteps:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, engine, spec):
+            self.calls += 1
+            for _ in range(2):
+                result = engine.gradient_step(spec)
+            result["components"]["procedure_calls"] = self.calls
+            return result
+
+        def state_dict(self):
+            return {"calls": self.calls}
+
+        def load_state_dict(self, saved):
+            self.calls = saved["calls"]
+
+    monkeypatch.setitem(OPTIMIZERS, "test_gpu_sgd", OptimizerFactory(torch.optim.SGD, "1"))
+    monkeypatch.setitem(PROCEDURES, "test_gpu_repeat", ProcedureFactory(TwoSteps, lambda spec: None, "1"))
+    state = ModelState.load(
+        model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
+        max_seq_length=256, lora_rank=4, lora_alpha=8,
+    )
+    engine = TrainEngine(state, lr=1e-3, optimizer_class="test_gpu_sgd",
+                         optimizer_kwargs={"momentum": 0.9})
+    spec = {"procedure": "test_gpu_repeat", "objective": "sft", "samples": [{
+        "prompt": "Name a color.", "response": "Blue is a calming color.",
+    }]}
+    engine.step(spec)
+    manager = SnapshotManager(tmp_path)
+    manager.save("resume", state, engine=engine, include_training=True)
+    expected = engine.step(spec)
+    expected_weights = state.extract_active_adapter()
+    engine.step(spec)
+    manager.load("resume", state, engine=engine, resume=True)
+    actual = engine.step(spec)
+    assert actual["loss"] == pytest.approx(expected["loss"], abs=1e-6)
+    assert actual["components"]["procedure_calls"] == expected["components"]["procedure_calls"]
+    for name, value in state.extract_active_adapter().items():
+        assert torch.equal(value, expected_weights[name]), name
+
+
+@pytest.mark.gpu
 @pytest.mark.parametrize("checkpointing", ["standard", "off"])
 def test_model_controls_and_memory_rejection_before_forward(tmp_path, monkeypatch, checkpointing):
     import torch

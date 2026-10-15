@@ -9,6 +9,7 @@ on first backward.
 from __future__ import annotations
 
 import logging
+import json
 from typing import Any
 
 import torch
@@ -36,6 +37,7 @@ class TrainEngine:
         per_objective_lr: dict[str, float] | None = None,
         default_watchlist: list[int] | None = None,
         optimizer_class: str = "adamw8bit",
+        optimizer_kwargs: dict[str, Any] | None = None,
         memory_reserve_bytes: int = 256 * 1024**2,
         training_workspace_bytes: int = 0,
         inference_workspace_bytes: int = 0,
@@ -50,7 +52,15 @@ class TrainEngine:
         # here we just forward the daemon-global slice. See
         # safety-monitor-primitive.md.
         self.default_watchlist: list[int] = list(default_watchlist or [])
+        from .optimizers import get_optimizer
+
+        get_optimizer(optimizer_class)  # Fail before the first update on misspelled names.
         self.optimizer_class = optimizer_class
+        if optimizer_kwargs is not None and not isinstance(optimizer_kwargs, dict):
+            raise TypeError("optimizer_kwargs must be a JSON object")
+        self.optimizer_kwargs = json.loads(json.dumps(optimizer_kwargs or {}, allow_nan=False))
+        if "lr" in self.optimizer_kwargs or "params" in self.optimizer_kwargs:
+            raise ValueError("optimizer_kwargs cannot override lr or params")
         from ..memory import MemoryAdmission
 
         self.memory = MemoryAdmission(memory_reserve_bytes, training_workspace_bytes, inference_workspace_bytes)
@@ -60,44 +70,36 @@ class TrainEngine:
         # per family — PyTorch keys optimizer.state by tensor id, so
         # param_groups alone won't isolate moments.
         self._opts: dict[str, torch.optim.Optimizer] = {}
+        self._procedures: dict[str, Any] = {}
+        self._procedure_versions: dict[str, str] = {}
 
     def _optimizer(self, objective: str = _SHARED_KEY) -> torch.optim.Optimizer:
         key = objective if self.per_objective else _SHARED_KEY
         opt = self._opts.get(key)
         if opt is None:
             params = [p for p in self.state.model.parameters() if p.requires_grad]
-            if self.per_objective:
-                # Plain 32-bit AdamW per objective. bitsandbytes optimizers are
-                # deliberately avoided here: their GlobalOptimManager is a
-                # process-wide singleton that does not cleanly support
-                # multiple instances over the same params. See
-                # optimizer-sample-efficiency.md §3 + anti-patterns.
-                lr = self.per_objective_lr.get(objective, self.lr)
-                opt = torch.optim.AdamW(params, lr=lr)
-                log.info("per-objective AdamW for %r (lr=%g)", objective, lr)
-            else:
-                optimizer_class = getattr(self, "optimizer_class", "adamw8bit")
-                if optimizer_class == "lion8bit":
-                    try:
-                        import bitsandbytes as bnb
+            from .optimizers import get_optimizer
 
-                        opt = bnb.optim.Lion8bit(params, lr=self.lr)
-                        log.info("using bitsandbytes Lion8bit (lr=%g)", self.lr)
-                    except Exception:
-                        log.warning(
-                            "failed to import bitsandbytes Lion8bit; falling back to AdamW"
-                        )
-                        opt = torch.optim.AdamW(params, lr=self.lr)
-                else:
-                    # 8-bit Adam if bitsandbytes is present, else plain AdamW.
-                    try:
-                        import bitsandbytes as bnb
-
-                        opt = bnb.optim.AdamW8bit(params, lr=self.lr)
-                        log.info("using bitsandbytes AdamW8bit (lr=%g)", self.lr)
-                    except Exception:
-                        opt = torch.optim.AdamW(params, lr=self.lr)
-                        log.info("using torch AdamW (lr=%g)", self.lr)
+            # Preserve the existing isolated-AdamW behavior for legacy 8-bit
+            # names. Custom factories must explicitly support shared-parameter
+            # optimizer instances to participate in per-objective mode.
+            selected = getattr(self, "optimizer_class", "adamw8bit")
+            if self.per_objective and selected in {"adamw8bit", "lion8bit"}:
+                selected = "adamw"
+            factory = get_optimizer(selected)
+            if self.per_objective and not factory.supports_per_objective:
+                raise ValueError(f"optimizer {selected!r} does not support per-objective instances")
+            lr = self.per_objective_lr.get(objective, self.lr) if self.per_objective else self.lr
+            opt = factory.create(params, lr=lr, **getattr(self, "optimizer_kwargs", {}))
+            if not isinstance(opt, torch.optim.Optimizer):
+                raise TypeError("optimizer factory must return torch.optim.Optimizer")
+            expected = [id(p) for p in params]
+            actual = [id(p) for group in opt.param_groups for p in group["params"]]
+            if len(actual) != len(set(actual)) or set(actual) != set(expected):
+                raise ValueError("optimizer factory must own exactly the live trainable parameters")
+            opt._trainfer_factory = {"name": selected, "version": factory.version}
+            opt._trainfer_estimate_state_bytes = factory.estimate_state_bytes
+            log.info("optimizer %s (%s) for %r", selected, factory.version, key)
             self._opts[key] = opt
         return opt
 
@@ -109,6 +111,9 @@ class TrainEngine:
         # per-objective mode we drop every instance, not just one — snapshot
         # rewinds the shared weights that every optimizer's state is keyed to.
         self._opts.clear()
+        if hasattr(self, "_procedures"):
+            self._procedures.clear()
+            self._procedure_versions.clear()
         # Also clear the KTO z0 EMA — it carries drift info conditioned on
         # the pre-snapshot weight trajectory, which is stale after a restore.
         # See review finding C-3.
@@ -116,7 +121,52 @@ class TrainEngine:
 
         _Z0_EMA.clear()
 
+    def _prepare_training_mode(self):
+        try:
+            from unsloth import FastLanguageModel
+        except ImportError:
+            pass  # Raw torch models remain supported without Unsloth.
+        else:
+            checkpointing = getattr(self.state, "training_config", {}).get("gradient_checkpointing", "unsloth")
+            FastLanguageModel.for_training(
+                self.state.model, use_gradient_checkpointing=checkpointing != "off",
+            )
+        self.state.model.train()
+
     def step(self, spec: dict[str, Any]) -> dict[str, Any]:
+        name = spec.get("procedure", "gradient")
+        if name == "gradient":
+            return self.gradient_step(spec)
+        from .procedures import get_procedure
+
+        registration = get_procedure(name)
+        registration.validate(spec)
+        with model_operation(self.state.mode_lock, "update"):
+            self._prepare_training_mode()  # Invalidates cached fast-inference adapter tensors.
+            procedure = self._procedures.get(name)
+            if procedure is None:
+                procedure = registration.create()
+                for method in ("run", "state_dict", "load_state_dict"):
+                    if not callable(getattr(procedure, method, None)):
+                        raise TypeError(f"procedure {name!r} must implement {method}")
+                self._procedures[name] = procedure
+                self._procedure_versions[name] = registration.version
+            try:
+                result = procedure.run(self, spec)
+                if not isinstance(result, dict) or "loss" not in result or not isinstance(result.get("components"), dict):
+                    raise TypeError("procedure must return {loss, components, skipped?}")
+                if result["loss"] is not None and not isinstance(result["loss"], (int, float)):
+                    raise TypeError("procedure loss must be a numeric scalar or None")
+                # Commit results cannot retain GPU tensors or autograd graphs.
+                json.dumps(result, allow_nan=False)
+            except Exception:
+                self.state.model.zero_grad(set_to_none=True)
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                raise
+            return result
+
+    def gradient_step(self, spec: dict[str, Any]) -> dict[str, Any]:
         """Execute one training step according to `spec`.
 
         `spec`:
@@ -152,17 +202,7 @@ class TrainEngine:
 
             microbatches = plan(spec)
         with model_operation(self.state.mode_lock, "update"):
-            # Training mode + LoRA grads on.
-            try:
-                from unsloth import FastLanguageModel
-
-                checkpointing = getattr(self.state, "training_config", {}).get("gradient_checkpointing", "unsloth")
-                FastLanguageModel.for_training(
-                    self.state.model, use_gradient_checkpointing=checkpointing != "off",
-                )
-            except Exception:
-                pass
-            self.state.model.train()
+            self._prepare_training_mode()
 
             # Inference may disable adapter gradients. Restore training mode
             # before constructing an optimizer, but admit before any forward.

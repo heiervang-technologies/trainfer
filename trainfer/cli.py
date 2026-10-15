@@ -8,6 +8,7 @@ test runner happy.
 from __future__ import annotations
 
 import argparse
+import json
 import pathlib
 
 from .config import ServeConfig
@@ -28,6 +29,8 @@ def parse_cli_args(argv: list[str] | None = None) -> ServeConfig:
     p.add_argument("--lora-target-modules", nargs="+", default=cfg.lora_target_modules)
     p.add_argument("--gradient-checkpointing", choices=["unsloth", "standard", "off"], default=cfg.gradient_checkpointing)
     p.add_argument("--model-dtype", choices=["auto", "bfloat16", "float32"], default=cfg.model_dtype)
+    p.add_argument("--optimizer", default=cfg.optimizer)
+    p.add_argument("--optimizer-kwargs", default="{}", help="JSON object passed to the registered optimizer factory")
     p.add_argument("--memory-reserve-mib", type=int, default=cfg.memory_reserve_bytes // 1024**2)
     p.add_argument("--training-workspace-mib", type=int, default=cfg.training_workspace_bytes // 1024**2)
     p.add_argument("--inference-workspace-mib", type=int, default=cfg.inference_workspace_bytes // 1024**2)
@@ -62,6 +65,13 @@ def parse_cli_args(argv: list[str] | None = None) -> ServeConfig:
     cfg.lora_target_modules = args.lora_target_modules
     cfg.gradient_checkpointing = args.gradient_checkpointing
     cfg.model_dtype = args.model_dtype
+    cfg.optimizer = args.optimizer
+    try:
+        cfg.optimizer_kwargs = json.loads(args.optimizer_kwargs)
+        if not isinstance(cfg.optimizer_kwargs, dict):
+            raise ValueError("expected a JSON object")
+    except ValueError as exc:
+        p.error(f"invalid --optimizer-kwargs: {exc}")
     if min(args.memory_reserve_mib, args.training_workspace_mib, args.inference_workspace_mib) < 0:
         p.error("memory budgets must be nonnegative")
     cfg.memory_reserve_bytes = args.memory_reserve_mib * 1024**2

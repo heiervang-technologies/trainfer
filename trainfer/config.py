@@ -128,6 +128,7 @@ class ServeConfig:
 
     # Optimizer class: "adamw8bit" (default) or "lion8bit".
     optimizer: str = "adamw8bit"
+    optimizer_kwargs: dict = field(default_factory=dict)
 
     # --- /v1/commits/stream SSE -------------------------------------------
     # Per-commit event stream, one event per successful train-task cursor

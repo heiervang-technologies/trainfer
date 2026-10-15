@@ -77,6 +77,12 @@ class MemoryAdmission:
                         new_state += moments * n * 4
                     if config.get("max_unorm", 0) > 0:
                         new_state += 4
+        estimator = getattr(optimizer, "_trainfer_estimate_state_bytes", None)
+        if estimator is not None:
+            new_state = estimator(optimizer)
+            if isinstance(new_state, bool) or not isinstance(new_state, int) or new_state < 0:
+                raise ValueError("optimizer state estimator must return nonnegative integer bytes")
+            known = True
         required = gradient + new_state + self.training_workspace_bytes
         basis = "gradient + optimizer state + configured activation workspace"
         if not known:
