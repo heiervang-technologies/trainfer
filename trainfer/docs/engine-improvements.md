@@ -353,3 +353,14 @@ separately. The existing CCD reasoning-model test remains an expected failure;
 CCPD forward/backward through the engine passes. These are engine checks, not
 continual-learning evidence. Final coverage audit remains open, including
 consolidation under mixed serving load.
+
+
+The real queued-consolidation check also passes: Qwen3-0.6B compact application
+took 5.665 s / 52,224 additional GPU bytes, with three chats and one further
+update waiting. Independent chats produced their first stream events after
+5.889/6.096 s; the dependent chat after 6.467 s. The next update had nonzero
+gradients and all commit checks passed. An explicit error allowance of 10 was
+used to exercise application: observed error 9.21887 would fail the default
+gate. This measures the serving pause and post-merge operability, not quality.
+Raw records and the reproduction command are in the measurements directory.
+The remaining task is the requirement-by-requirement final coverage audit.

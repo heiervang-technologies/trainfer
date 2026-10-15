@@ -106,3 +106,29 @@ OMP_NUM_THREADS=4 UNSLOTH_DISABLE_STATISTICS=1 \
   TRAINFER_CAPACITY_REPORT=/path/on/bulk-disk/capacity.json \
   python -m pytest trainfer/tests/test_capacity_resources.py -qs
 ```
+
+## Consolidation with queued serving work
+
+[Raw Qwen3-0.6B consolidation/serving record](rtx3090-qwen06b-consolidation-serving.json)
+uses source `222a223`, the same GPU environment, rank 8 / alpha 16, maximum
+sequence length 256, and three single-sample SFT updates at the controller's
+default learning rate. Three eight-token chats and another update were admitted
+while the merge held the shared model lock; one chat depended on that update.
+
+The compact merge took 5.665 s across 196 projections and added 52,224 peak GPU
+bytes. Independent chats delivered their first stream events after 5.889 s and
+6.096 s; the dependent chat after 6.467 s. Those times include text buffering,
+not just first-token delivery. The next update completed after 6.397 s with a
+nonzero gradient; all work completed in 6.616 s with correct commits. This
+quantifies the serving pause rather than claiming background consolidation.
+
+The test explicitly allows relative update error up to 10 to exercise actual
+application and subsequent serving/training. Observed error was 9.21887, which
+the default gate would reject. This is deliberately permissive integration
+coverage, not a recommended merge policy or evidence of useful learning.
+
+```bash
+OMP_NUM_THREADS=4 UNSLOTH_DISABLE_STATISTICS=1 \
+  TRAINFER_CONSOLIDATION_REPORT=/path/on/bulk-disk/consolidation-serving.json \
+  python -m pytest trainfer/tests/test_consolidation_serving.py -qs
+```
