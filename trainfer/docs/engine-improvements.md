@@ -15,7 +15,7 @@ and evidence of continual learning belong in `cont`.
   preserving FIFO update ordering and avoiding starvation.
 - [x] Consolidation has a bounded-memory alternative to dense GPU residuals,
   with quantitative preflight estimates and explicit approximation semantics.
-- [ ] Memory admission, microbatch accumulation, and model/adapter configuration
+- [x] Memory admission, microbatch accumulation, and model/adapter configuration
   support training near capacity without changing the intended update silently.
 - [x] Update procedures and optimizers have documented extension points beyond
   the built-in loss registry.
@@ -23,8 +23,12 @@ and evidence of continual learning belong in `cont`.
   avoid stale files, and validate restore compatibility.
 - [x] A reproducible mixed-workload benchmark records memory peaks, inference
   latency/throughput, update throughput, switch overhead, and correctness.
-- [ ] CPU and available GPU validation cover the changes; PR explains measured
+- [x] CPU and available GPU validation cover the changes; PR explains measured
   gains, costs, limitations, and decisions without claiming unmeasured benefits.
+
+The sections below are a chronological implementation record. Earlier pending
+statements are superseded by later evidence. The current requirement mapping is
+in [acceptance-audit.md](acceptance-audit.md).
 
 ## Initial evidence and decisions
 
@@ -364,3 +368,21 @@ used to exercise application: observed error 9.21887 would fail the default
 gate. This measures the serving pause and post-merge operability, not quality.
 Raw records and the reproduction command are in the measurements directory.
 The remaining task is the requirement-by-requirement final coverage audit.
+
+
+## Acceptance audit complete
+
+At source `5d9f8f8`, the final CPU collection passed 419 tests (one optional
+skip), the explicit real-model GPU bundle passed 15 tests in 168.58 seconds,
+and seven CPU bitsandbytes consolidation tests passed. The latest torchless
+run passed 96 tests (three skips). Changed-file Ruff and whitespace checks pass.
+Fetched main remains at `1c6391f`; no remote CI checks are reported.
+
+[The acceptance audit](acceptance-audit.md) maps every checklist requirement to
+implementation, tests, reproduction commands, and limits. Capacity acceptance
+is supported by calibrated workspace controls, preserved update reduction,
+pre-mutation rejection, and a measured 14B configuration alongside existing GPU
+workloads. It does not claim an absolute model/context maximum. Consolidation
+quality and continual-learning behavior remain external research questions;
+the engine now exposes and rejects damaging approximations by default rather
+than silently treating requantization as lossless. The PR is ready for review.
