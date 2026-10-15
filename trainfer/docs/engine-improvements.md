@@ -179,3 +179,44 @@ consolidation tests and a GPU-resident residual preview memory regression pass.
 The latter bounds additional GPU allocation below 1 MiB for a 2048×2048 bf16
 residual: copy to CPU before converting to float32. Normal residual merges
 already store their source tensors on CPU; this also covers resident inputs.
+
+## Microbatch accumulation
+
+`microbatch_size` splits each optimizer update independently of queue
+`chunk_size`. SFT, weighted SFT, and combinations of these preserve their
+respective denominators and outer weights. One clip/optimizer step follows all
+backward passes under the model lock. A callable-specific reduction contract
+allows extension to other separable losses. Stateful/batch-dependent objectives
+and sidecars without such a contract reject before admission. No automatic OOM
+retry changes the batch. Forward/backward failure clears partial gradients;
+optimizer-step failure is not promised to roll back already mutated weights.
+
+CPU tests compare two successive updates, parameter values, Adam moments,
+clipped gradient norms, uneven slices, unequal/zero weights, fully masked
+responses, combined objectives, late-forward failure cleanup, and queue commit
+counts. Existing combined-objective tests pass too (20 tests together).
+
+RTX 3090/Qwen3-0.6B, four samples, microbatch size one, rank 8, sequence limit
+512, same saved weights/optimizer/RNG for each comparison:
+
+| Input lengths | Full-batch peak allocated | Accumulated peak allocated | Full loss | Accumulated loss | Full/accumulated update cosine |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Unequal | 1,484,168,192 B | 892,971,008 B | 0.945974 | 0.952357 | 0.987562 |
+| Equal | 1,469,107,200 B | 889,205,760 B | 0.817177 | 0.804951 | 0.985320 |
+
+This is a 39–40% reduction in total peak allocation for these workloads, not a
+largest-model capacity or throughput claim. Loss changes of approximately
+0.7–1.5% remain with equal-length inputs. Thus full-batch bitwise/numerical
+equivalence is not claimed for this low-precision backend.
+
+An independent reference uses the existing combined-loss implementation with
+one forward per sample, all graphs retained, and one combined backward. Its
+loss matches accumulation within 1e-5 relative tolerance; gradient relative
+error was at most 2.3e-11 and update cosine approximately 1.0. This isolates the
+accumulation implementation from the change in forward tensor shapes. Long
+vector norm/cosine measurements use float64: float32 test metrics initially
+reported a spurious reference-update difference, even a gradient cosine above
+one. The CPU full-batch comparison independently verifies reduction semantics.
+
+Memory admission, broader model/adapter controls, general update/optimizer
+extension points, and mixed-workload comparative benchmarks remain outstanding.

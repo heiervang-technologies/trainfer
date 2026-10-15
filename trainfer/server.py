@@ -142,6 +142,7 @@ class TrainRequest(BaseModel):
     batch_objectives: list[dict[str, Any]] = Field(default_factory=list)
     kwargs: dict[str, Any] = Field(default_factory=dict)
     chunk_size: int = Field(default=2, ge=1)
+    microbatch_size: int | None = Field(default=None, ge=1)
 
 
 class FeedbackRequest(BaseModel):

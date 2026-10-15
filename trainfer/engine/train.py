@@ -140,6 +140,11 @@ class TrainEngine:
         backward + optimizer step are mutually exclusive with any concurrent
         inference on the same model. See `state.ModelState.mode_lock`.
         """
+        microbatches = None
+        if spec.get("microbatch_size") is not None:
+            from .accumulation import plan
+
+            microbatches = plan(spec)
         with model_operation(self.state.mode_lock, "update"):
             # Training mode + LoRA grads on.
             try:
@@ -149,6 +154,9 @@ class TrainEngine:
             except Exception:
                 pass
             self.state.model.train()
+
+            if microbatches is not None:
+                return self._step_accumulated(spec, microbatches)
 
             if spec.get("objectives"):
                 return self._step_multi(spec)
@@ -274,6 +282,55 @@ class TrainEngine:
                 "components": components,
                 "skipped": False,
             }
+
+    def _step_accumulated(self, spec, microbatches):
+        """One optimizer step, releasing each forward graph after backward.
+
+        The caller owns the model lock throughout. Dropout and floating-point
+        reduction order can differ from a full batch; objective normalization
+        and optimizer step count do not. No automatic OOM retry changes data.
+        """
+        name = _SHARED_KEY if spec.get("objectives") else spec["objective"]
+        opt = self._optimizer(name)
+        opt.zero_grad(set_to_none=True)
+        components = {"microbatches": len(microbatches)}
+        total = 0.0
+        try:
+            for micro in microbatches:
+                kwargs = micro.kwargs
+                if self.state.frozen_ref is not None:
+                    kwargs.setdefault("pi_ref", self.state.frozen_ref)
+                kwargs.setdefault("effective_lr", self.per_objective_lr.get(micro.name, self.lr))
+                kwargs.setdefault("batch_objectives", [])
+                result = micro.objective(self.state.model, self.state.tokenizer, micro.samples, **kwargs)
+                loss = result.get("loss")
+                if loss is None:
+                    raise ValueError("an accumulation objective cannot skip a microbatch")
+                scaled = loss * micro.scale
+                if scaled.ndim != 0 or not bool(torch.isfinite(scaled)):
+                    raise ValueError("accumulation requires finite scalar losses")
+                scaled.backward()
+                value = float(scaled.detach())
+                total += value
+                key = micro.name + ".weighted_loss"
+                components[key] = components.get(key, 0.0) + value
+                # Do not keep the previous graph alive during the next forward.
+                del result, loss, scaled
+            if self.grad_clip and self.grad_clip > 0:
+                norm = torch.nn.utils.clip_grad_norm_(
+                    [p for p in self.state.model.parameters() if p.requires_grad], self.grad_clip,
+                    error_if_nonfinite=True,
+                )
+                components["grad_norm_total"] = float(norm)
+                components["grad_clipped"] = bool(norm > self.grad_clip)
+            opt.step()
+        except Exception:
+            opt.zero_grad(set_to_none=True)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            raise
+        components["loss"] = total
+        return {"loss": total, "components": components, "skipped": False}
 
     def _step_multi(self, spec: dict[str, Any]) -> dict[str, Any]:
         """Combined-loss path: Σᵢ wᵢ·Lᵢ in one backward pass.

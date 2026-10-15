@@ -150,3 +150,44 @@ Full GPU smoke (loads Qwen3-0.6B; ~90 s end-to-end):
 pip install -e .                         # full unsloth git dep
 python -m trainfer.tests.smoke_server        # in-process server, /v1/train + /v1/chat roundtrip
 ```
+
+## Microbatch accumulation
+
+`POST /v1/train` accepts `microbatch_size` independently of `chunk_size`:
+
+```json
+{"objective":"weighted_sft","chunk_size":8,"microbatch_size":1,
+ "samples":[{"prompt":"Name a color.","response":"Blue.","weight":3}]}
+```
+
+`chunk_size` partitions requests into optimizer steps/queue commits. Within each
+chunk, `microbatch_size` bounds samples per forward/backward; clipping and the
+optimizer step happen once after all microbatches. The model lock stays held
+throughout that update. To accumulate a whole request into one update, set
+`chunk_size` to at least its sample count. Combined-objective requests already
+form one update and can also specify `microbatch_size`.
+
+SFT and weighted SFT have explicit reduction contracts. Uneven final slices
+use sample counts or weight sums, respectively, rather than averaging slice
+means. Weighted SFT preserves its denominator clamp and includes zero-weight
+and fully masked samples with the same semantics as an unsplit batch.
+Combinations of those objectives preserve their independent normalization and
+outer objective weights. Unsupported objectives and batch sidecars reject
+before queue admission; no fallback silently changes the loss.
+
+Plugins can call `trainfer.engine.accumulation.register_reduction(loss_fn,
+denominator_fn)`, where `denominator_fn(samples, kwargs)` is pure and returns
+the objective's positive finite local denominator, including any clamp. The
+contract requires `loss * denominator` to be additive across sample slices.
+The objective must not couple samples, mutate a running baseline, or gate
+individual slices. Registration attaches to the callable, so replacing a named
+objective does not inherit the previous implementation's contract. This is a
+reduction extension point; arbitrary update procedures have a separate scope.
+
+Accumulation preserves the mathematical objective and number of optimizer
+steps, not bitwise GPU results. Changed tensor shapes, floating-point reduction
+order, and dropout can change numerical results. There is no automatic OOM
+retry or automatic adjustment of microbatch size. A failure before the optimizer
+step clears partial gradients and propagates through the commit token. As with
+ordinary training, an optimizer failure after it begins mutating parameters is
+not transactionally rolled back.

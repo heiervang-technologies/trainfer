@@ -113,6 +113,63 @@ def test_snapshot_resume_reproduces_real_optimizer_update(tmp_path):
 
 
 @pytest.mark.gpu
+@pytest.mark.parametrize("equal_lengths", [False, True])
+def test_microbatch_accumulation_reduces_real_training_peak(tmp_path, equal_lengths):
+    import torch
+    from trainfer.snapshot import SnapshotManager
+
+    state = ModelState.load(
+        model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
+        max_seq_length=512, lora_rank=8, lora_alpha=16,
+    )
+    engine = TrainEngine(state, lr=1e-4)
+    samples = [{"prompt": "Name a color." if equal_lengths else f"Name color number {i}.",
+                "response": "Blue is a calming color. " * (15 if equal_lengths else 12 + i)}
+               for i in range(4)]
+    engine.step({"objective": "sft", "samples": samples[:1]})
+    manager = SnapshotManager(tmp_path)
+    manager.save("initial", state, engine=engine, include_training=True)
+    initial = state.extract_active_adapter()
+    results = []
+    specs = [
+        {"objective": "sft", "samples": samples},
+        {"objective": "sft", "samples": samples, "microbatch_size": 1},
+        # Independent reference using the existing combined-loss path: same
+        # per-sample forwards, all graphs retained, one combined backward.
+        {"objectives": [{"name": "sft", "samples": [s], "weight": 0.25} for s in samples]},
+    ]
+    for spec in specs:
+        manager.load("initial", state, engine=engine, resume=True)
+        for opt in engine._opts.values():
+            opt.zero_grad(set_to_none=True)
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+        result = engine.step(spec)
+        torch.cuda.synchronize()
+        peak = torch.cuda.max_memory_allocated()
+        delta = torch.cat([(value.double() - initial[name].double()).flatten()
+                           for name, value in state.extract_active_adapter().items()])
+        gradients = torch.cat([p.grad.detach().cpu().double().flatten()
+                               for p in state.model.parameters() if p.requires_grad])
+        results.append((result, peak, delta, gradients))
+    full, micro, reference = results
+    cosine = float(torch.nn.functional.cosine_similarity(full[2], micro[2], dim=0))
+    reference_cosine = float(torch.nn.functional.cosine_similarity(reference[2], micro[2], dim=0))
+    gradient_cosine = float(torch.nn.functional.cosine_similarity(reference[3], micro[3], dim=0))
+    gradient_error = float((reference[3] - micro[3]).norm() / reference[3].norm())
+    print({"full_peak_bytes": full[1], "microbatch_peak_bytes": micro[1],
+           "full_loss": full[0]["loss"], "microbatch_loss": micro[0]["loss"],
+           "update_cosine": cosine, "combined_reference_loss": reference[0]["loss"],
+           "combined_reference_cosine": reference_cosine, "equal_lengths": equal_lengths,
+           "gradient_cosine": gradient_cosine, "gradient_relative_error": gradient_error,
+           "parameter_dtypes": sorted({str(p.dtype) for p in state.model.parameters() if p.requires_grad})})
+    assert micro[1] < full[1]
+    assert micro[0]["loss"] == pytest.approx(reference[0]["loss"], rel=1e-5)
+    assert reference_cosine > 0.999
+    assert gradient_error < 1e-5
+
+
+@pytest.mark.gpu
 def test_consolidation_preview_keeps_resident_residual_conversion_on_cpu(tmp_path):
     """A GPU-resident residual must not create a float32 GPU temporary."""
     import torch

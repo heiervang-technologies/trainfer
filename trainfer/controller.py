@@ -624,6 +624,14 @@ class Controller:
                 f"batch_too_large: request has {total_samples} samples, cap is {max_samples}"
             )
 
+        if spec.get("microbatch_size") is not None:
+            from .engine.accumulation import plan
+
+            try:
+                plan(spec)  # Reject unsupported reductions before admitting any tasks.
+            except (ValueError, KeyError, TypeError) as exc:
+                raise InvalidInputError(str(exc)) from exc
+
         batch_id = new_batch_id()
 
         qsize = self.queue.qsize()
@@ -656,8 +664,6 @@ class Controller:
             "chunk_size", 2
         )  # small default for 0.6B; caller can bump
         if not isinstance(chunk_size, int) or chunk_size < 1:
-            from .errors import InvalidInputError
-
             raise InvalidInputError("chunk_size must be a positive integer")
         payloads = []
         for i in range(0, max(1, len(samples)), chunk_size):
