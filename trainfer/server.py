@@ -141,7 +141,7 @@ class TrainRequest(BaseModel):
     samples: list[dict[str, Any]] = Field(default_factory=list)
     batch_objectives: list[dict[str, Any]] = Field(default_factory=list)
     kwargs: dict[str, Any] = Field(default_factory=dict)
-    chunk_size: int = 2
+    chunk_size: int = Field(default=2, ge=1)
 
 
 class FeedbackRequest(BaseModel):
@@ -228,19 +228,9 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
         try:
             yield
         finally:
-            # Auto-snapshot before graceful shutdown so the next boot picks
-            # up exactly where this one left off. Written while the queue is
-            # still alive so the snapshot task runs through the same
-            # single-writer path as user-requested saves.
-            if cfg.autosave_on_exit:
-                name = cfg.autosave_snapshot_name
-                try:
-                    log.info("autosave_on_exit — saving snapshot %r", name)
-                    await app.state.controller.request_snapshot_save(name)
-                    log.info("autosave_on_exit — saved %r", name)
-                except Exception:
-                    log.exception("autosave_on_exit — save %r failed", name)
-
+            # Controller closes admission, drains accepted updates, then saves
+            # under the model lock. A pre-drain snapshot can miss accepted work
+            # or wait indefinitely before the shutdown deadline even starts.
             # Prefer the graceful path so pending /v1/wait callers get
             # ShutdownDroppedError envelopes instead of hanging on their own
             # 60s timeout (see issue #11).
@@ -299,6 +289,10 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
         messages = [m.model_dump() for m in req.messages]
 
         if req.stream:
+            # Resolve before sending HTTP 200 / SSE headers, so dependency
+            # failures use the same structured errors as non-streaming chat.
+            if req.after_commit_token is not None:
+                await c.wait_for_commit(req.after_commit_token)
 
             async def sse():
                 ttft_observed = False
@@ -308,7 +302,7 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
                         max_new_tokens=req.max_tokens or 256,
                         temperature=req.temperature,
                         top_p=req.top_p,
-                        after_commit_token=req.after_commit_token,
+                        after_commit_token=None,
                         enable_thinking=req.enable_thinking,
                         parse_reasoning=req.parse_reasoning,
                         use_adapter=req.use_adapter,
@@ -574,7 +568,7 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
     async def wait(token: int, timeout: float = 60.0) -> dict[str, Any]:
         c: Controller = app.state.controller
         try:
-            task = await c.queue.wait_for(int(token), timeout=timeout)
+            task = await c.wait_for_commit(int(token), timeout=timeout)
             return {"committed": True, "token": task.token, "kind": task.kind}
         except asyncio.TimeoutError:
             return {"committed": False, "reason": "timeout"}

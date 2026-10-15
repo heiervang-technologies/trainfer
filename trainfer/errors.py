@@ -32,6 +32,8 @@ ERROR_CODES: frozenset[str] = frozenset(
         "shutting_down",
         "shutdown_dropped",
         "timeout",
+        "commit_expired",
+        "task_failed",
         "internal",
     }
 )
@@ -109,6 +111,16 @@ class TimeoutError(TrainferError):  # noqa: A001 — intentional shadow within t
     code = "timeout"
     status_code = 504
     retryable = True
+
+
+class CommitExpiredError(TrainferError):
+    code = "commit_expired"
+    status_code = 410
+
+
+class TaskFailedError(TrainferError):
+    code = "task_failed"
+    status_code = 409
 
 
 def envelope_payload(

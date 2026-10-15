@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import math
 import sys
 import threading
 from dataclasses import dataclass, field
@@ -213,12 +214,18 @@ class ModelState:
 
     # ------------------------------------------------------------------ adapter ops
     def reset_active_adapter(self) -> None:
-        """Zero the active LoRA matrices. Keeps rank+target intact."""
-        with torch.no_grad():
+        """Reset to a zero update with a live gradient path (random A, zero B).
+
+        Zeroing both factors makes both derivatives of B @ A zero. Reset
+        optimizer state whenever resetting an adapter with an existing optimizer.
+        """
+        with self.mode_lock, torch.no_grad():
             for name, p in self.model.named_parameters():
-                if "lora_A" in name or "lora_B" in name:
+                if "lora_A" in name:
+                    torch.nn.init.kaiming_uniform_(p, a=math.sqrt(5))
+                elif "lora_B" in name:
                     p.zero_()
-        log.info("active LoRA adapter zeroed")
+        log.info("active LoRA adapter reset (random A, zero B)")
 
     def extract_active_adapter(self) -> dict[str, torch.Tensor]:
         """Snapshot the LoRA A/B matrices only (the trainable part)."""
@@ -262,7 +269,7 @@ class ModelState:
                     continue
                 A = module.lora_A["default"].weight  # (r, in)
                 B = module.lora_B["default"].weight  # (out, r)
-                if A.abs().sum() == 0 and B.abs().sum() == 0:
+                if not torch.count_nonzero(B) or not torch.count_nonzero(A):
                     continue
                 delta = (B @ A).to(torch.float32) * scale  # (out, in)
                 key = f"{name}.weight"

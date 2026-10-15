@@ -28,7 +28,10 @@ pytestmark = pytest.mark.cpu_only
 
 def _make_fake_state() -> ModelState:
     """A ModelState with a stub model (no GPU). Only merged_deltas matter here."""
+    import threading
+
     state = ModelState.__new__(ModelState)
+    state.mode_lock = threading.RLock()
     state.model = MagicMock()
     # Make model.named_parameters iterable returning (name, param) pairs.
     fake_params: list[tuple[str, torch.nn.Parameter]] = [

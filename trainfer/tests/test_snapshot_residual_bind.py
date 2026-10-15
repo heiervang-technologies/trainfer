@@ -13,6 +13,7 @@ to verify the snapshot load path actually binds/clears the residual.
 from __future__ import annotations
 
 import tempfile
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -62,6 +63,7 @@ class FakeModel(nn.Module):
 def _make_state_with_fake_model() -> ModelState:
     """Create a ModelState with a fake LoRA model (CPU only)."""
     state = ModelState.__new__(ModelState)
+    state.mode_lock = threading.RLock()
     state.model = FakeModel()
     state.tokenizer = MagicMock()
     state.base_model_name = "test/fake"

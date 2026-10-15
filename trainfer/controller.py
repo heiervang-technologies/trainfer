@@ -21,6 +21,7 @@ from .commit_stream import CommitBroadcaster
 from .config import ServeConfig
 from .engine.replay import IdleReplayScheduler, ReplayPolicy
 from .engine.train import TrainEngine
+from .errors import NotFoundError, TaskFailedError, TimeoutError as CommitTimeoutError
 from .logging_backends import LoggerConfig, MetricsLogger, flatten_scalars, get_logger
 from .queue import ComputeQueue, new_batch_id
 from .snapshot import SnapshotManager
@@ -118,7 +119,7 @@ class Controller:
                 "frozen_ref": bool(self.cfg.frozen_ref),
             }
         )
-        await self.queue.start(self._handle_task)
+        await self.queue.start(self._handle_task, on_complete=self._on_task_complete)
         if self.cfg.idle_replay:
             self._replay = IdleReplayScheduler(self, ReplayPolicy.from_config(self.cfg))
             await self._replay.start()
@@ -183,6 +184,17 @@ class Controller:
             deadline_s=deadline_s,
             hard_stop_grace_s=hard_stop_grace_s,
         )
+        if drain.get("in_flight"):
+            # The worker still owns mutable model state and may still log.
+            # Never save a torn checkpoint or close its logger underneath it.
+            self._defer_logger_close = True
+            log.error("shutdown deadline exceeded with an active update; autosave skipped")
+            return {"already_shut_down": False, **drain}
+        if self.cfg.autosave_on_exit and self.state is not None:
+            try:
+                await asyncio.to_thread(self._save_exit_snapshot)
+            except Exception:
+                log.exception("autosave_on_exit failed")
         try:
             self.metrics_logger.close()
         except Exception as exc:  # pragma: no cover — logger is optional
@@ -193,8 +205,39 @@ class Controller:
             "timed_out": drain["timed_out"],
         }
 
+    def _save_exit_snapshot(self) -> None:
+        with self.state.mode_lock:
+            self.snapshots.save(self.cfg.autosave_snapshot_name, self.state, self.trajectory)
+
     # ------------------------------------------------------------------ queue handler
     def _handle_task(self, task) -> Any:
+        """All model reads and mutations serialize against generation."""
+        with self.state.mode_lock:
+            return self._handle_task_locked(task)
+
+    def _on_task_complete(self, task) -> None:
+        """Runs on the event loop after the queue publishes the cursor."""
+        if getattr(self, "_defer_logger_close", False):
+            self._defer_logger_close = False
+            try:
+                self.metrics_logger.close()
+            except Exception:
+                log.exception("deferred logger close failed")
+        if task.kind != "train" or task.error is not None:
+            return
+        payload = task.payload
+        objective = payload.get("objective") or "multi[" + "+".join(
+            sorted({o["name"] for o in payload.get("objectives", [])})
+        ) + "]"
+        self.commits.broadcast_commit(
+            cursor=task.token,
+            objective=objective,
+            loss=float(task.result.get("loss") or 0.0),
+            components=task.result.get("components") or {},
+            batch_size=len(payload.get("samples", [])),
+        )
+
+    def _handle_task_locked(self, task) -> Any:
         """Runs on the single worker thread. May raise; queue catches and stores."""
         t0 = time.time()
         kind = task.kind
@@ -251,22 +294,10 @@ class Controller:
             scalars = flatten_scalars(components or {})
             if scalars:
                 self.metrics_logger.log_metrics(scalars, step=task.token)
-            # /v1/commits/stream broadcast. Runs synchronously here (the queue
-            # worker runs on the event loop and `_handle_task` is sync), so
-            # `put_nowait` only *schedules* SSE wakeups — the queue's finally
-            # block still advances `_completed_token` before any subscriber
-            # coroutine resumes. That's what preserves the spec's "cursor=N in
-            # the event ⇒ /v1/state/stats reports committed >= N" invariant.
-            self.commits.broadcast_commit(
-                cursor=task.token,
-                objective=objective,
-                loss=float(result.get("loss") or 0.0),
-                components=components or {},
-                batch_size=len(payload.get("samples", [])),
-            )
             return {"loss": result.get("loss"), "components": components, "wall": wall}
         elif kind == "merge":
             self.state.merge_active_into_residual()
+            self.train_engine.reset_optimizer()
             return {
                 "merges_applied": self.state.merges_applied,
                 "residual_fp": self.state.residual_fingerprint(),
@@ -317,11 +348,24 @@ class Controller:
             return {"fraction": frac, "matched": matched, "total": total, "wall": wall}
         elif kind == "reset_adapter":
             self.state.reset_active_adapter()
+            self.train_engine.reset_optimizer()
             return {"ok": True, "wall": time.time() - t0}
         else:
             raise ValueError(f"unknown task kind {kind!r}")
 
     # ------------------------------------------------------------------ public ops
+    async def wait_for_commit(self, token: int, timeout: float = 60.0):
+        """A dependency succeeds only when its update actually succeeded."""
+        try:
+            task = await self.queue.wait_for(token, timeout=timeout)
+        except asyncio.TimeoutError as exc:
+            raise CommitTimeoutError(f"timed out waiting for commit token {token}") from exc
+        except KeyError as exc:
+            raise NotFoundError(f"unknown commit token {token}") from exc
+        if task.error is not None:
+            raise TaskFailedError(f"commit token {token} failed") from task.error
+        return task
+
     async def generate(
         self, messages: list[dict[str, str]], **kwargs: Any
     ) -> dict[str, Any]:
@@ -330,11 +374,9 @@ class Controller:
         sees it' guarantee from the caller's viewpoint: callers may pass
         `after_commit_token` to block on that specific training."""
         wait_for = kwargs.pop("after_commit_token", None)
+        self._reject_if_shutting_down()
         if wait_for is not None:
-            try:
-                await self.queue.wait_for(int(wait_for), timeout=60.0)
-            except (asyncio.TimeoutError, KeyError):
-                pass
+            await self.wait_for_commit(int(wait_for))
         parse_reasoning = kwargs.pop("parse_reasoning", True)
         use_adapter = kwargs.pop("use_adapter", True)
         # Run the actual generation outside the queue — training+inference
@@ -347,6 +389,10 @@ class Controller:
         model = self.state.model
 
         def _run() -> str:
+            with self.state.mode_lock:
+                return _run_locked()
+
+        def _run_locked() -> str:
             # `disable_adapter()` is only present on PEFT-wrapped models; the
             # base-only path (e.g. smoke tests with a raw HF model) doesn't
             # have it, so we degrade gracefully.
@@ -400,11 +446,9 @@ class Controller:
         stays responsive.
         """
         wait_for = kwargs.pop("after_commit_token", None)
+        self._reject_if_shutting_down()
         if wait_for is not None:
-            try:
-                await self.queue.wait_for(int(wait_for), timeout=60.0)
-            except (asyncio.TimeoutError, KeyError):
-                pass
+            await self.wait_for_commit(int(wait_for))
         parse_reasoning = kwargs.pop("parse_reasoning", True)
         use_adapter = kwargs.pop("use_adapter", True)
 
@@ -429,7 +473,7 @@ class Controller:
             else:
                 ctx = contextlib.nullcontext()
             try:
-                with ctx:
+                with self.state.mode_lock, ctx:
                     for chunk in generate_chat_stream(
                         model,
                         self.state.tokenizer,
@@ -541,7 +585,8 @@ class Controller:
         total_samples = 0
         if has_objs:
             for obj in spec["objectives"]:
-                total_samples += len(obj.get("samples", []))
+                samples = obj.get("samples")
+                total_samples += len(spec.get("samples", []) if samples is None else samples)
         else:
             total_samples = len(spec.get("samples", []))
 
@@ -584,16 +629,20 @@ class Controller:
         chunk_size = spec.get(
             "chunk_size", 2
         )  # small default for 0.6B; caller can bump
-        tasks = []
+        if not isinstance(chunk_size, int) or chunk_size < 1:
+            from .errors import InvalidInputError
+
+            raise InvalidInputError("chunk_size must be a positive integer")
+        payloads = []
         for i in range(0, max(1, len(samples)), chunk_size):
             sub = {
                 **spec,
                 "samples": samples[i : i + chunk_size] if samples else samples,
             }
-            t = await self.queue.try_submit("train", sub, batch_id=batch_id)
-            tasks.append(t)
+            payloads.append(sub)
             if not samples:
                 break
+        tasks = await self.queue.submit_many("train", payloads, batch_id=batch_id)
         # The commit_token is the last task's token.
         commit_token = tasks[-1].token
         return {
@@ -752,12 +801,16 @@ class Controller:
         self._reject_if_shutting_down()
         task = await self.queue.submit("snapshot_save", {"name": name})
         result = await self.queue.wait_for(task, timeout=300.0)
+        if result.error is not None:
+            raise result.error
         return {"commit_token": task.token, "result": result.result}
 
     async def request_snapshot_load(self, name: str) -> dict[str, Any]:
         self._reject_if_shutting_down()
         task = await self.queue.submit("snapshot_load", {"name": name})
         result = await self.queue.wait_for(task, timeout=300.0)
+        if result.error is not None:
+            raise result.error
         return {"commit_token": task.token, "result": result.result}
 
     async def submit_eval_greedy_rank(

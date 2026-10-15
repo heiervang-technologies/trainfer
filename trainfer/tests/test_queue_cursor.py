@@ -167,5 +167,106 @@ def test_queue_scenarios() -> None:
     assert asyncio.run(main()) == 0
 
 
+def test_completed_failure_survives_pending_gc():
+    async def scenario():
+        q = ComputeQueue()
+
+        async def fail(task):
+            raise RuntimeError("training failed")
+
+        await q.start(fail)
+        task = await q.submit("train", {})
+        await task.done.wait()
+        assert task.token not in q._pending
+        assert (await q.wait_for(task.token)).error is not None
+        await q.stop()
+
+    asyncio.run(scenario())
+
+
+def test_expired_and_negative_tokens_fail_closed():
+    from trainfer.errors import CommitExpiredError
+
+    async def scenario():
+        q = ComputeQueue(outcome_history=1)
+        await q.start(_slow_handler)
+        first = await q.submit("train", {})
+        last = await q.submit("train", {})
+        await last.done.wait()
+        with pytest.raises(CommitExpiredError):
+            await q.wait_for(first.token)
+        with pytest.raises(KeyError):
+            await q.wait_for(-1)
+        assert len(q._outcomes) == 1
+        await q.stop()
+
+    asyncio.run(scenario())
+
+
+def test_batch_admission_is_atomic():
+    from trainfer.errors import QueueFullError
+
+    async def scenario():
+        q = ComputeQueue(max_depth=2)
+        await q.submit("train", {})
+        with pytest.raises(QueueFullError):
+            await q.submit_many("train", [{}, {}], batch_id="batch")
+        assert q.qsize() == 1
+        assert q._next_token == 1
+
+    asyncio.run(scenario())
+
+
+def test_final_batch_token_reports_earlier_failure():
+    async def scenario():
+        q = ComputeQueue()
+
+        async def handler(task):
+            if task.payload == "fail":
+                raise ValueError("first chunk failed")
+
+        await q.start(handler)
+        tasks = await q.submit_many("train", ["fail", "ok"], batch_id="batch")
+        await tasks[-1].done.wait()
+        assert (await q.wait_for(tasks[-1].token)).error is not None
+        assert not q._batch_remaining
+        await q.stop()
+
+    asyncio.run(scenario())
+
+
+def test_sync_work_keeps_loop_responsive_and_callback_ordered():
+    import threading
+
+    async def scenario():
+        q = ComputeQueue()
+        entered = threading.Event()
+        release = threading.Event()
+        events = []
+        loop_thread = threading.get_ident()
+
+        def handler(task):
+            entered.set()
+            assert release.wait(2), "event loop could not release worker"
+            return "done"
+
+        def completed(task):
+            assert threading.get_ident() == loop_thread
+            assert q.committed >= task.token
+            assert task.done.is_set()
+            events.append(task.result)
+
+        await q.start(handler, on_complete=completed)
+        task = await q.submit("train", {})
+        assert await asyncio.to_thread(entered.wait, 1)
+        assert not task.done.is_set()
+        release.set()
+        await q.wait_for(task, timeout=2)
+        assert events == ["done"]
+        await q.stop()
+
+    asyncio.run(scenario())
+
+
 if __name__ == "__main__":
     sys.exit(asyncio.run(main()))
