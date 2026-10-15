@@ -32,7 +32,7 @@ trainfer depends on `unsloth` from the heiervang fork:
 unsloth @ git+https://github.com/heiervang-technologies/ht-unsloth@ht-2026-05-15
 ```
 
-(see [`pyproject.toml`](pyproject.toml)). Bump intentionally when ht-unsloth syncs with upstream — the load-bearing coupling is the runtime monkeypatch in `trainfer/state.py` of `unsloth.kernels.utils.matmul_lora`, guarded by `TrainferMatmulRebindError` on signature drift.
+(see [`pyproject.toml`](pyproject.toml)). Bump intentionally when ht-unsloth syncs with upstream — the load-bearing coupling is the runtime monkeypatch in `trainfer/state.py` of `unsloth.kernels.utils.matmul_lora` and `fast_linear_forward`, guarded by `TrainferMatmulRebindError` on signature drift.
 
 The Studio frontend + the `studio/backend/routes/lile.py` HTTP proxy stay in ht-unsloth and talk to the daemon over `LILE_DAEMON_URL`. Those names still say `lile`; the rename on that side is a pending follow-up. Don't add Python imports across that boundary; if you need to share types, copy them.
 

@@ -21,7 +21,7 @@ and evidence of continual learning belong in `cont`.
   the built-in loss registry.
 - [x] Snapshots distinguish weight restore from resumable optimization state,
   avoid stale files, and validate restore compatibility.
-- [ ] A reproducible mixed-workload benchmark records memory peaks, inference
+- [x] A reproducible mixed-workload benchmark records memory peaks, inference
   latency/throughput, update throughput, switch overhead, and correctness.
 - [ ] CPU and available GPU validation cover the changes; PR explains measured
   gains, costs, limitations, and decisions without claiming unmeasured benefits.
@@ -319,3 +319,37 @@ greater than 1, preventing a vacuous pass on tiny updates. Both that test and
 the existing full-model residual-forward test pass. Full CPU suite: 383 pass,
 one optional-dependency skip. Mixed-workload timing must be rerun after this
 hot-path change; the earlier records are not final performance evidence.
+
+## Final resource runs and large-operation timeout
+
+The corrected decoder source `f536f51` passed all nine mixed runs with exact
+final adapters and satisfied dependencies. Mean throughput was 25.40–25.50
+output tokens/s across policies: no speed gain is established. Burst 1 reduced
+mean update latency to 2.427 s versus burst 4 at 3.386 s, while burst 4 reduced
+mean independent-chat TTFT to 1.157 s versus 1.545 s. RLock independent TTFT
+was 1.046 s; bounded scheduling is not proven faster than RLock here. Full raw
+records, switch costs, and reproducible commands are in
+[measurements/README.md](measurements/README.md).
+
+A pinned Qwen3-14B dynamic 4-bit checkpoint completed train → infer → train
+with all model weights GPU resident on the shared RTX 3090. Peak allocated
+memory was 12,406,562,816 bytes for rank-8 adapters and microbatch-one updates
+of four 381–399-token samples. This proves one larger configuration fits, not
+an absolute largest-model or maximum-context limit. Dense residual merge was
+rejected before mutation at an estimated additional 28,563,210,240 bytes.
+Full 280-projection compact preview used 1,024 extra GPU bytes, took 332.407 s,
+and reported relative update error 2.13555: the default gate rejects it.
+
+This exposed the controller's fixed 300-second merge wait: a valid large
+preview could continue after its request lost the result. Merge now awaits its
+accepted task without that engine deadline. Client/proxy timeouts still need
+configuration, and disconnecting does not cancel accepted work. A queue-backed
+regression verifies a pending merge keeps its caller/result attached and the
+event loop responsive until completion.
+
+Latest complete CPU collection: 418 passed, one optional dependency skip;
+torchless: 96 passed, three skips. The added long-merge regression is validated
+separately. The existing CCD reasoning-model test remains an expected failure;
+CCPD forward/backward through the engine passes. These are engine checks, not
+continual-learning evidence. Final coverage audit remains open, including
+consolidation under mixed serving load.
