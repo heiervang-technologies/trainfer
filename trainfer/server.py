@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, Literal
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -153,6 +153,15 @@ class FeedbackRequest(BaseModel):
 
 class SnapshotRequest(BaseModel):
     name: str
+    include_training: bool = False
+    resume: bool = False
+
+
+class MergeRequest(BaseModel):
+    strategy: Literal["residual", "cpu_requantize"] = "residual"
+    preview: bool = False
+    max_relative_update_error: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    max_cpu_workspace_bytes: int = Field(default=4 * 1024**3, gt=0)
 
 
 class MemorizeRequest(BaseModel):
@@ -203,19 +212,23 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
         _load_verifier_plugins()
 
         # Crash-safe auto-restore: if the previous run wrote an _autosave
-        # snapshot, load it before we accept requests. Failures here are
-        # non-fatal — we just log and keep the freshly-loaded base weights.
+        # snapshot, load it before accepting requests. Never silently discard
+        # trained state by serving a cold model after a failed restore.
         if cfg.autoload_on_boot:
             name = cfg.autosave_snapshot_name
             try:
                 if name in app.state.controller.snapshots.list():
                     log.info("autoload_on_boot — restoring snapshot %r", name)
-                    await app.state.controller.request_snapshot_load(name)
+                    manifest = await asyncio.to_thread(app.state.controller.snapshots.describe, name)
+                    resume = cfg.autosave_training_state and manifest.get("resumable", False)
+                    await app.state.controller.request_snapshot_load(name, resume=resume)
                     log.info("autoload_on_boot — restored %r", name)
             except Exception:
                 log.exception(
-                    "autoload_on_boot — load %r failed; continuing cold", name
+                    "autoload_on_boot — load %r failed; refusing to serve cold weights", name
                 )
+                await app.state.controller.stop()
+                raise
 
         # Hot reload: patches function bodies in place on file save.
         # Gated on cfg.dev_autoreload (or TRAINFER_DEV_AUTORELOAD=1). Safe to
@@ -500,16 +513,16 @@ def create_app(cfg: ServeConfig | None = None) -> FastAPI:
 
     # --------------------------------------------------------------- state ops
     @app.post("/v1/state/merge")
-    async def state_merge() -> dict[str, Any]:
-        return await app.state.controller.request_merge()
+    async def state_merge(req: MergeRequest | None = None) -> dict[str, Any]:
+        return await app.state.controller.request_merge(**(req or MergeRequest()).model_dump())
 
     @app.post("/v1/state/snapshot/save")
     async def state_save(req: SnapshotRequest) -> dict[str, Any]:
-        return await app.state.controller.request_snapshot_save(req.name)
+        return await app.state.controller.request_snapshot_save(req.name, include_training=req.include_training)
 
     @app.post("/v1/state/snapshot/load")
     async def state_load(req: SnapshotRequest) -> dict[str, Any]:
-        return await app.state.controller.request_snapshot_load(req.name)
+        return await app.state.controller.request_snapshot_load(req.name, resume=req.resume)
 
     @app.get("/v1/state/snapshots")
     async def state_list() -> dict[str, Any]:

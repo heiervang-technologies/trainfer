@@ -85,10 +85,12 @@ def test_residual_applied_live():
     # to baseline; with it, the live weights are base + residual ≈ trained.
     state.merge_active_into_residual()
 
-    # Sanity: active is zero.
-    for n, p in state.model.named_parameters():
-        if "lora_A" in n or "lora_B" in n:
-            assert float(p.abs().max()) == 0.0, f"adapter not zeroed: {n}"
+    # The effective update is zero. A must remain initialized so the next
+    # training step can produce a nonzero gradient for B.
+    for module in state.model.modules():
+        if hasattr(module, "lora_A") and "default" in module.lora_A:
+            update = module.lora_B["default"].weight @ module.lora_A["default"].weight
+            assert update.count_nonzero() == 0
 
     merged_lp = _greedy_logprob(state, prompt, target)
     print(f"[live-res] merged (zero adapter + residual) logprob: {merged_lp:.3f}")

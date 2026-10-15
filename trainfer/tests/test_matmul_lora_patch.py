@@ -62,12 +62,9 @@ def _install_stub_unsloth(monkeypatch, matmul_lora_impl):
 
 
 def _fresh_install_state():
-    """``trainfer.state`` caches its install via ``functools.cache``. Clear the
-    cache so tests can drive the install function independently of any
-    earlier-test side effects."""
+    """Import the installer; idempotence is tied to the live backend callable."""
     from trainfer import state as state_mod
 
-    state_mod.install.cache_clear()
     return state_mod
 
 
@@ -90,10 +87,9 @@ def test_signature_match_installs_wrapper(monkeypatch):
     )
 
 
-def test_signature_mismatch_skips_install(monkeypatch, caplog):
-    """A matmul_lora with a different signature must be left alone (no patch,
-    no crash) — fast-path residual silently disabled, peft hook backstop still
-    runs. We assert the warning fires so observability is preserved."""
+def test_signature_mismatch_rejects_install(monkeypatch):
+    """Never load a model whose fast path silently ignores merged updates."""
+    from trainfer.errors import TrainferMatmulRebindError
 
     def odd_signature(inputs, weight):  # wrong arity + names
         return inputs @ weight.T
@@ -101,15 +97,12 @@ def test_signature_mismatch_skips_install(monkeypatch, caplog):
     _, utils, _ = _install_stub_unsloth(monkeypatch, odd_signature)
     state_mod = _fresh_install_state()
 
-    with caplog.at_level("WARNING", logger="trainfer.state"):
+    with pytest.raises(TrainferMatmulRebindError, match="signature changed"):
         state_mod._install_matmul_lora_patch()
 
     assert utils.matmul_lora is odd_signature, (
         "drift detected — original must be preserved untouched"
     )
-    assert any(
-        "matmul_lora signature changed" in rec.message for rec in caplog.records
-    ), "drift must surface as a WARNING, not silent"
 
 
 def test_install_is_idempotent(monkeypatch):

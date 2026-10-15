@@ -24,6 +24,8 @@ def parse_cli_args(argv: list[str] | None = None) -> ServeConfig:
     p.add_argument("--max-seq-length", type=int, default=cfg.max_seq_length)
     p.add_argument("--lora-rank", type=int, default=cfg.lora_rank)
     p.add_argument("--inference-burst", type=int, default=cfg.inference_burst)
+    p.add_argument("--autosave-training-state", action="store_true", default=cfg.autosave_training_state)
+    p.add_argument("--autoload-on-boot", action=argparse.BooleanOptionalAction, default=cfg.autoload_on_boot)
     p.add_argument(
         "--no-4bit", dest="load_in_4bit", action="store_false", default=cfg.load_in_4bit
     )
@@ -46,6 +48,8 @@ def parse_cli_args(argv: list[str] | None = None) -> ServeConfig:
     if args.inference_burst < 1:
         p.error("--inference-burst must be positive")
     cfg.inference_burst = args.inference_burst
+    cfg.autosave_training_state = args.autosave_training_state
+    cfg.autoload_on_boot = args.autoload_on_boot
     cfg.load_in_4bit = args.load_in_4bit
     cfg.idle_replay = args.idle_replay
     cfg.frozen_ref = args.frozen_ref

@@ -145,6 +145,7 @@ class ServeConfig:
     autosave_on_exit: bool = True
     autoload_on_boot: bool = True
     autosave_snapshot_name: str = "_autosave"
+    autosave_training_state: bool = False
 
     # --- safety_monitor daemon-global watchlist ---------------------------
     # Three-tier union at step time: this daemon-global floor

@@ -13,13 +13,13 @@ and evidence of continual learning belong in `cont`.
   ordered after task completion; shutdown does not race live model mutations.
 - [x] Explicit scheduling controls balance inference latency with update work,
   preserving FIFO update ordering and avoiding starvation.
-- [ ] Consolidation has a bounded-memory alternative to dense GPU residuals,
+- [x] Consolidation has a bounded-memory alternative to dense GPU residuals,
   with quantitative preflight estimates and explicit approximation semantics.
 - [ ] Memory admission, microbatch accumulation, and model/adapter configuration
   support training near capacity without changing the intended update silently.
 - [ ] Update procedures and optimizers have documented extension points beyond
   the built-in loss registry.
-- [ ] Snapshots distinguish weight restore from resumable optimization state,
+- [x] Snapshots distinguish weight restore from resumable optimization state,
   avoid stale files, and validate restore compatibility.
 - [ ] A reproducible mixed-workload benchmark records memory peaks, inference
   latency/throughput, update throughput, switch overhead, and correctness.
@@ -126,3 +126,56 @@ arbitrary losses is not equivalent. Expose update-procedure/optimizer extension
 points and declare supported reductions rather than silently approximating
 batch-dependent objectives. Benchmark memory and throughput over real mixed
 workloads, including consolidation, using the same hardware/model/settings.
+
+## Compact consolidation and snapshots: implementation/evidence
+
+`cpu_requantize` stages one adapted projection at a time on CPU/disk and copies
+the packed result into the existing GPU Parameter. It carries NF4/FP4 metadata
+with each projection and preserves dense projections in dynamic 4-bit models.
+Preview reports per-layer error and an aggregate error/update norm ratio without
+mutating weights or RNG state. The default application gate requires error norm
+strictly below update norm; callers may supply an explicit different bound.
+Neither gate nor preview claims to predict task accuracy.
+
+The CPU tensor estimate defaults to a 4 GiB ceiling per projection. This bounds
+the planned dense working tensors, not process RSS or backend scratch space.
+Consolidation pauses model execution while preparing/applying the candidate.
+Disk staging retains both old and new projection weights for rollback.
+
+Real Qwen3-0.6B, RTX 3090, three SFT steps, four CPU threads: explicitly allowing
+relative error up to 2.0 yielded error/update norm **1.4132**, additional peak
+GPU allocation **52,224 bytes**, and consolidation wall time **8.53 seconds**.
+Target sum log-probability changed **−19.55 → −44.82**. This demonstrates a
+memory-efficient mechanism and a harmful early consolidation, not retained
+learning quality. The default gate now rejects this case. Training after the
+explicitly permitted consolidation succeeded, and loading the earlier snapshot
+restored the original target log-probability within 1e-5.
+
+Snapshots atomically publish a manifest after syncing immutable payloads, check
+checksums/compatibility before restore, and contain all adapted base projections.
+Weights-only restore resets optimizer state. Explicit resume restores optimizer
+moments, Python/NumPy/torch/CUDA RNG, and KTO running baseline. Adapter dtype is
+preserved. Resumable snapshots reproduced the exact next CPU update and the
+exact next Qwen3-0.6B GPU update with AdamW8bit. Legacy weights-only snapshots
+remain usable against their original base; mismatched revisions fail closed.
+The trajectory offset stays provenance metadata and never truncates history.
+
+CPU tests cover interrupted publication, empty-overwrite stale residuals,
+preflight incompatibility, partial-copy rollback for consolidation and restore,
+preview non-mutation, quantization-resolution rejection, and original/modified
+base round trips. The real-model test also bounds additional GPU allocation to
+32 MiB. CPU NF4 execution was verified on bitsandbytes 0.50.2 / torch 2.10.0.
+
+Model loading now raises the documented `TrainferMatmulRebindError` if Unsloth's
+kernel signature drifts; it previously warned and silently disabled the fast
+residual path. An invalid autosave similarly fails startup instead of silently
+serving cold weights. These deliberate failure semantics preserve engine
+correctness and are documented in OPERATING.md.
+
+Follow-up validation: 331 CPU tests passed (one optional dependency skip), and
+12 controller/lifespan tests passed, including refusal to serve after a failed
+autosave restore without overwriting that snapshot. Seven CPU bitsandbytes
+consolidation tests and a GPU-resident residual preview memory regression pass.
+The latter bounds additional GPU allocation below 1 MiB for a 2048×2048 bf16
+residual: copy to CPU before converting to float32. Normal residual merges
+already store their source tensors on CPU; this also covers resident inputs.

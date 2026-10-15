@@ -54,6 +54,57 @@ def _bare_controller(cfg):
 # ---------------------------------------------------------------- tests
 
 
+def test_invalid_autosave_aborts_startup_without_overwriting_it(tmp_path):
+    from unittest.mock import AsyncMock, Mock
+    from trainfer.server import create_app
+
+    app = create_app(_cfg(tmp_path))
+    ctl = app.state.controller
+    ctl.start = AsyncMock()
+    ctl.stop = AsyncMock()
+    ctl.graceful_shutdown = AsyncMock()
+    ctl.snapshots = Mock()
+    ctl.snapshots.list.return_value = [ctl.cfg.autosave_snapshot_name]
+    ctl.snapshots.describe.return_value = {"resumable": True}
+    ctl.request_snapshot_load = AsyncMock(side_effect=ValueError("checksum mismatch"))
+
+    async def main():
+        with pytest.raises(ValueError, match="checksum mismatch"):
+            async with app.router.lifespan_context(app):
+                pytest.fail("startup accepted invalid saved weights")
+
+    asyncio.run(main())
+    ctl.stop.assert_awaited_once()
+    ctl.graceful_shutdown.assert_not_awaited()
+    ctl.snapshots.save.assert_not_called()
+
+
+@pytest.mark.parametrize("configured,resumable,expected", [
+    (True, True, True), (True, False, False), (False, True, False),
+])
+def test_autoload_resumes_training_only_when_configured(tmp_path, configured, resumable, expected):
+    from unittest.mock import AsyncMock, Mock
+    from trainfer.server import create_app
+
+    cfg = _cfg(tmp_path)
+    cfg.autosave_training_state = configured
+    app = create_app(cfg)
+    ctl = app.state.controller
+    ctl.start = AsyncMock()
+    ctl.graceful_shutdown = AsyncMock(return_value={})
+    ctl.snapshots = Mock()
+    ctl.snapshots.list.return_value = [cfg.autosave_snapshot_name]
+    ctl.snapshots.describe.return_value = {"resumable": resumable}
+    ctl.request_snapshot_load = AsyncMock()
+
+    async def main():
+        async with app.router.lifespan_context(app):
+            pass
+
+    asyncio.run(main())
+    ctl.request_snapshot_load.assert_awaited_once_with(cfg.autosave_snapshot_name, resume=expected)
+
+
 def test_shutting_down_flag_starts_false(tmp_path):
     with tempfile.TemporaryDirectory(dir=tmp_path) as d:
         cfg = _cfg(pathlib.Path(d))

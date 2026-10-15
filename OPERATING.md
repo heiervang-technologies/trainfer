@@ -60,7 +60,7 @@ CUDA operation; the engine never pretends that such an operation completed.
 `ServeConfig.data_dir` defaults to `./trainfer_data/` (relative to the working directory). Inside:
 
 - `trajectory.jsonl` — append-only event log (`train_step`, `inference`, `feedback`, `eval_point`, …). See [`trainfer/trajectory.py`](trainfer/trajectory.py).
-- `snapshots/<name>/` — byte-exact checkpoints: model weights + optimizer state + bf16 residual + trajectory offset. See [`trainfer/snapshot.py`](trainfer/snapshot.py).
+- `snapshots/<name>/` — a manifest pointing to versioned tensor payloads, adapted base projections, and optional optimizer/RNG state. See [`trainfer/snapshot.py`](trainfer/snapshot.py).
 - `daemon.log` — written by the legacy Studio capsule spawn path (still readable; no longer produced by the in-repo entrypoint).
 - `rlvr_loop.jsonl` — RLVR scheduler events. See [`teach/rlvr_loop.py`](https://github.com/heiervang-technologies/cont/blob/main/teach/rlvr_loop.py) in the `cont` repo.
 - `tutor_run_01/` — committed eval baselines (`cold_500_det.json`, `trained_500_det{,_run2}.json`, `length_compression_finding.md`). Used as the anchor for length-compression regressions.
@@ -71,7 +71,42 @@ Override the directory at the config layer (`ServeConfig(data_dir=...)`) or via 
 
 - Snapshots are taken through the compute queue (single-writer), so `/v1/state/snapshot/save` is serialized against training and merges.
 - The reserved name `_autosave` is written automatically on graceful shutdown if `cfg.autosave_on_exit` is on, and reloaded at startup if `cfg.autoload_on_boot` is on.
-- Restore is byte-exact: LoRA adapter weights, bf16 CPU residual, merge counter, and the trajectory log offset all roll back together. There is no "partial" restore. On load, the residual is re-bound onto the live model's forward path (`_apply_residual_to_model`), stale hooks are cleared if the snapshot has no residual, and the optimizer is reset so Adam moments don't carry stale trajectory info.
+- Saves publish the manifest only after all payloads are written and synced. An interrupted overwrite leaves the previous snapshot readable. Checksums and model/adapter/quantization compatibility are checked before restore. Adapter dtype is preserved.
+- Snapshots include every adapted base projection, including packed quantization metadata and dense projections in mixed-precision models. This costs disk space but permits restoring an earlier base after consolidation. Restore stages rollback data on disk and copies projections in place, without a second GPU base.
+- Default load is **weights-only**: it restores weights/residuals and resets optimizer history. Save with `{"name":"session","include_training":true}` and load with `{"name":"session","resume":true}` to resume optimizer moments, Python/NumPy/torch/CUDA RNG state, and the model's KTO running baseline. Resume requires matching optimizer configuration, parameter order/shapes, reference mode, and CUDA device count. Identical numerical behavior across different software/hardware is not promised.
+- `--autosave-training-state` enables resumable autosaves and uses them on boot. Older weights-only autosaves still restore their weights. An invalid autosave now fails startup instead of silently serving a cold model; use `--no-autoload-on-boot` explicitly when a cold start is intended.
+- The trajectory remains append-only. Its saved byte offset is provenance metadata, not a request to truncate the log. Queue tokens remain process-local and are not rewound by snapshot load.
+
+## Compact consolidation and preview
+
+`POST /v1/state/merge` without a body keeps the existing dense-residual strategy.
+To estimate a compact merge without modifying the model:
+
+```json
+{"strategy":"cpu_requantize","preview":true}
+```
+
+To apply it, use `{"strategy":"cpu_requantize"}`. It prepares each projection
+on CPU and stages candidate/rollback weights under `data_dir/consolidation/`.
+The model lock remains held during this operation: it is a serving pause, not
+an asynchronous weight copy. Packed GPU storage is overwritten in place; dense
+projections remain in their original dtype. The adapter and optimizer restart
+after a successful merge. A null update does not requantize the base again.
+
+Reports include per-layer and aggregate error relative to the intended update,
+retained update norm/cosine, unchanged weight fraction, and estimated CPU
+workspace. This estimates weight error, not task accuracy. Applying rejects an
+error norm at least as large as the update by default. Callers can supply
+`max_relative_update_error` to choose a different explicit bound; preview without
+a bound always reports the candidate. Even passing the default gate does not
+prove behavioral quality. Small updates can be erased by quantization.
+
+`max_cpu_workspace_bytes` defaults to 4 GiB and screens the estimated dense CPU
+working tensors before allocation. Backend/BLAS workspace and allocator overhead
+mean it is not a hard RSS limit. Temporary disk use includes old and new packed
+weights (and any dense adapted projections). Use a sufficiently large local data
+volume. The CPU backend was validated with bitsandbytes 0.50.2 and torch 2.10.0;
+older backends without CPU 4-bit operators cannot use this strategy.
 
 ## Cross-repo policy
 
@@ -86,7 +121,7 @@ unsloth @ git+https://github.com/heiervang-technologies/ht-unsloth@<tag>
 **Tag cadence (tied to upstream-sync).** ht-unsloth cuts a tag named `ht-YYYY-MM-DD` after every successful rebase of `ht` onto upstream Unsloth's `main` — that boundary is the natural "stable point" where upstream just shipped a compatible state, our patches replay clean, CI is green. trainfer bumps its pin on the same beat. Expected cadence: 2–4 weeks when upstream is hot (Gemma releases, transformers point releases), 6–8 weeks when quiet. Goal: trainfer never lives more than one tag behind the last upstream-compatible point.
 
 **When to bump the pin:**
-1. ht-unsloth pushes a new `ht-YYYY-MM-DD` tag. Confirm `matmul_lora`'s signature still matches `_EXPECTED_MATMUL_LORA_PARAMS` in [`trainfer/state.py`](trainfer/state.py:60) — if it drifted, the signature-guard test (`trainfer/tests/test_matmul_lora_patch.py::test_signature_mismatch_skips_install`) is the canary.
+1. ht-unsloth pushes a new `ht-YYYY-MM-DD` tag. Confirm `matmul_lora`'s signature still matches `_EXPECTED_MATMUL_LORA_PARAMS` in [`trainfer/state.py`](trainfer/state.py) — if it drifted, `test_signature_mismatch_rejects_install` verifies that model loading fails instead of silently ignoring residuals.
 2. Open a one-line PR bumping the `@<tag>` reference in `pyproject.toml` + `CLAUDE.md`. Keep `MIGRATION.md` at the historical SHA — that doc records what was current at relocation time, not the moving pin.
 3. Never `@ht` or `@main` in the pin — those are moving refs and break reproducibility. Always a tagged name (`ht-YYYY-MM-DD`) or, in emergencies, a frozen SHA.
 

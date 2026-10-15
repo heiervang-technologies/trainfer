@@ -23,6 +23,8 @@ import ast
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 
 def _missing(*modules: str) -> bool:
     return any(importlib.util.find_spec(m) is None for m in modules)
@@ -110,7 +112,7 @@ def _cpu_only_whitelist_violations(tests_dir: Path, whitelist: set[str]) -> list
         mod = importlib.util.module_from_spec(spec)
         try:
             spec.loader.exec_module(mod)
-        except ImportError:
+        except (ImportError, pytest.skip.Exception):
             # Heavy-dep file; filtering it out is correct behavior.
             continue
         except Exception:

@@ -1,16 +1,10 @@
 """Live model state: base_weights ⊕ merged_deltas ⊕ active_lora_adapter.
 
-The invariant from LIVELEARN §3.1/§6:
-  * base is NF4, never modified.
-  * merged_deltas is a bf16 residual held in CPU RAM between merges, applied at
-    load time by adding into a dequantized copy of the base (never requantized
-    back to NF4 — that's the 4-bit merge gotcha from §6).
-  * active_lora_adapter is hot in GPU; gradients flow into it.
-
-For this implementation we rely on Unsloth's FastLanguageModel + PEFT LoRA. The
-merged_deltas residual is materialized by Unsloth's existing dequant→fp32→merge
-path when `merge()` is called; we keep our own bf16 copy so we can repeat the
-merge or restore it on load.
+The default merge keeps the base unchanged and applies accumulated bf16
+residuals at forward time. The opt-in CPU requantization strategy consolidates
+updates into the base itself, records a new base revision, and removes dense
+residuals. Both strategies keep a zero-output, trainable active LoRA adapter.
+Snapshots carry adapted base projections so either revision can be restored.
 
 Live residual application
 -------------------------
@@ -29,14 +23,13 @@ Attaching the delta to the Parameter itself (rather than Gemini's
 survives Unsloth's ``for_training``/``for_inference`` mode flips (``id(W)``
 stays stable across those flips, empirically verified on Qwen3).
 
-A fallback ``forward_pre_hook`` is also registered on ``base_layer`` so the
+A fallback ``forward_hook`` is also registered on ``base_layer`` so the
 standard PEFT path (used under ``model.disable_adapter()`` for the KL anchor)
 still applies the residual.
 """
 
 from __future__ import annotations
 
-import functools
 import logging
 import math
 import sys
@@ -45,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from .scheduling import ModelScheduler
+from .errors import TrainferMatmulRebindError
 
 import torch
 import torch.nn.functional as F
@@ -53,13 +47,12 @@ log = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------- matmul_lora patch
-# Module-level, installed once on import. Idempotent via the sentinel attribute.
+# Installed on model load. Idempotent via the sentinel attribute.
 #
 # Upstream coupling: our wrapper assumes matmul_lora's signature is
 # (X, W, W_quant, A, B, s, out=None). If a future Unsloth refactor changes
 # param names or count, we abort the install loudly rather than run with a
-# silently-wrong residual — trainfer still works, just without the fast-path
-# residual (PEFT-standard forward_pre_hook backstop still fires).
+# silently-wrong residual. A PEFT hook cannot cover the fast path.
 _EXPECTED_MATMUL_LORA_PARAMS = ("X", "W", "W_quant", "A", "B", "s", "out")
 
 
@@ -76,15 +69,11 @@ def _install_matmul_lora_patch() -> None:
     except (TypeError, ValueError):
         params = ()
     if params != _EXPECTED_MATMUL_LORA_PARAMS:
-        log.warning(
-            "trainfer: unsloth.kernels.utils.matmul_lora signature changed "
-            "(got %s, expected %s) — skipping residual patch install. "
-            "Live residual via fast path is DISABLED; PEFT forward_pre_hook "
-            "backstop still covers disable_adapter() codepaths.",
-            params,
-            _EXPECTED_MATMUL_LORA_PARAMS,
+        raise TrainferMatmulRebindError(
+            "unsloth.kernels.utils.matmul_lora signature changed "
+            f"(got {params}, expected {_EXPECTED_MATMUL_LORA_PARAMS}); "
+            "refusing to load a model whose fast path would ignore merged updates"
         )
-        return
 
     def _patched(X, W, W_quant, A, B, s, out=None):
         out_res = original(X, W, W_quant, A, B, s, out=out)
@@ -123,7 +112,6 @@ def _install_matmul_lora_patch() -> None:
     log.debug("installed matmul_lora residual patch (%d bindings rewritten)", replaced)
 
 
-@functools.cache
 def install() -> None:
     """Idempotent: patches unsloth's matmul_lora to honor ``W._residual_delta``.
 
@@ -148,6 +136,8 @@ class ModelState:
     lora_alpha: int
     # Bookkeeping of what has been merged so far in this process.
     merges_applied: int = 0
+    # Identifies the packed base after explicit, lossy consolidation.
+    base_revision: str = "original"
     # CPU bf16 residual: name -> delta tensor from all prior merges.
     merged_deltas: dict[str, torch.Tensor] = field(default_factory=dict)
     # Serializes train/infer mode flips. Unsloth's FastLanguageModel.for_inference
@@ -177,7 +167,8 @@ class ModelState:
         inference_burst: int = 4,
     ) -> "ModelState":
         # Install the matmul_lora residual patch before Unsloth finishes
-        # binding its fast-path references. Idempotent + cached.
+        # binding its fast-path references. The live callable's sentinel makes
+        # this idempotent without caching success for a replaced backend.
         install()
         from unsloth import FastLanguageModel  # heavy import; lazy
 
@@ -235,7 +226,7 @@ class ModelState:
         out: dict[str, torch.Tensor] = {}
         for name, p in self.model.named_parameters():
             if "lora_A" in name or "lora_B" in name:
-                out[name] = p.detach().to("cpu", dtype=torch.bfloat16).clone()
+                out[name] = p.detach().cpu().clone()
         return out
 
     def load_active_adapter(self, sd: dict[str, torch.Tensor]) -> None:

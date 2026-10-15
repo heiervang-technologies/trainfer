@@ -123,6 +123,10 @@ class TaskFailedError(TrainferError):
     status_code = 409
 
 
+class TrainferMatmulRebindError(TrainferError):
+    """The backend cannot honor trainfer's residual-forward contract."""
+
+
 def envelope_payload(
     *,
     code: str,

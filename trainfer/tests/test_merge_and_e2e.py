@@ -86,6 +86,105 @@ def test_training_restarts_after_repeated_merges():
         engine.reset_optimizer()
 
 
+@pytest.mark.gpu
+def test_snapshot_resume_reproduces_real_optimizer_update(tmp_path):
+    import torch
+    from trainfer.snapshot import SnapshotManager
+
+    state = ModelState.load(
+        model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
+        max_seq_length=256, lora_rank=8, lora_alpha=16,
+    )
+    engine = TrainEngine(state, lr=5e-5)
+    spec = {"objective": "sft", "samples": [{
+        "prompt": "Name a color.", "response": "Blue is a calming color.",
+    }]}
+    engine.step(spec)
+    manager = SnapshotManager(tmp_path)
+    manager.save("resume", state, engine=engine, include_training=True)
+    expected = engine.step(spec)
+    expected_weights = state.extract_active_adapter()
+    engine.step(spec)
+    manager.load("resume", state, engine=engine, resume=True)
+    actual = engine.step(spec)
+    assert actual["loss"] == pytest.approx(expected["loss"], abs=1e-6)
+    for name, tensor in state.extract_active_adapter().items():
+        assert torch.equal(tensor, expected_weights[name]), name
+
+
+@pytest.mark.gpu
+def test_consolidation_preview_keeps_resident_residual_conversion_on_cpu(tmp_path):
+    """A GPU-resident residual must not create a float32 GPU temporary."""
+    import torch
+    from trainfer.consolidation import consolidate
+
+    layer = torch.nn.Module()
+    layer.base_layer = torch.nn.Linear(2048, 2048, bias=False, dtype=torch.bfloat16, device="cuda")
+    layer.lora_A = torch.nn.ModuleDict({"default": torch.nn.Linear(
+        2048, 4, bias=False, dtype=torch.bfloat16, device="cuda",
+    )})
+    layer.lora_B = torch.nn.ModuleDict({"default": torch.nn.Linear(
+        4, 2048, bias=False, dtype=torch.bfloat16, device="cuda",
+    )})
+    state = ModelState(torch.nn.Sequential(layer), None, "synthetic", 4, 4)
+    residual = torch.full((2048, 2048), 0.001, dtype=torch.bfloat16, device="cuda")
+    state.merged_deltas = {"0.weight": residual}
+    torch.cuda.synchronize()
+    allocated = torch.cuda.memory_allocated()
+    torch.cuda.reset_peak_memory_stats()
+    report = consolidate(state, tmp_path, preview=True)
+    torch.cuda.synchronize()
+    assert torch.cuda.max_memory_allocated() - allocated < 1024**2
+    assert not report["applied"]
+    assert state.merged_deltas["0.weight"] is residual
+
+
+@pytest.mark.gpu
+def test_cpu_consolidation_keeps_gpu_compact_and_trainable(tmp_path):
+    import math
+    import torch
+    from trainfer.consolidation import consolidate
+    from trainfer.snapshot import SnapshotManager
+    from trainfer.tests.test_residual_live_path import _greedy_logprob
+
+    state = ModelState.load(
+        model_name="unsloth/qwen3-0.6b-unsloth-bnb-4bit",
+        max_seq_length=256, lora_rank=8, lora_alpha=16,
+    )
+    engine = TrainEngine(state, lr=1e-4)
+    prompt, response = "Name a color.", "Blue is a calming color."
+    spec = {"objective": "sft", "samples": [{"prompt": prompt, "response": response}]}
+    for _ in range(3):
+        engine.step(spec)
+    before_lp = _greedy_logprob(state, prompt, response)
+    manager = SnapshotManager(tmp_path / "snapshots")
+    manager.save("before", state)
+    torch.cuda.synchronize()
+    allocated = torch.cuda.memory_allocated()
+    torch.cuda.reset_peak_memory_stats()
+    # Exercise the lossy mechanism, not a claim that a tiny three-step update
+    # survives NF4. The measured error is printed and default admission is
+    # covered separately; this test explicitly permits a larger error.
+    report = consolidate(state, tmp_path / "work", max_relative_update_error=2.0)
+    torch.cuda.synchronize()
+    extra_peak = torch.cuda.max_memory_allocated() - allocated
+    assert extra_peak < 32 * 1024**2, "consolidation materialized dense GPU weights"
+    assert report["applied"] and math.isfinite(report["relative_update_error"])
+    assert not state.merged_deltas
+    after_lp = _greedy_logprob(state, prompt, response)
+    assert math.isfinite(after_lp)
+    print({"relative_update_error": report["relative_update_error"],
+           "extra_gpu_peak_bytes": extra_peak, "wall_seconds": report["wall_seconds"],
+           "logprob_before": before_lp, "logprob_after": after_lp})
+    engine.reset_optimizer()
+    result = engine.step(spec)
+    assert result["components"]["grad_norm_total"] > 0
+    manager.load("before", state)
+    assert state.base_revision == "original"
+    restored_lp = _greedy_logprob(state, prompt, response)
+    assert restored_lp == pytest.approx(before_lp, abs=1e-5)
+
+
 def test_end_to_end_training_moves_logprob():
     """Train on a fixed (prompt, target); measure mean log-prob on the target
     before and after several steps; confirm it moved upward (loss decreased).

@@ -21,7 +21,7 @@ from .commit_stream import CommitBroadcaster
 from .config import ServeConfig
 from .engine.replay import IdleReplayScheduler, ReplayPolicy
 from .engine.train import TrainEngine
-from .errors import NotFoundError, TaskFailedError, TimeoutError as CommitTimeoutError
+from .errors import InvalidInputError, NotFoundError, TaskFailedError, TimeoutError as CommitTimeoutError
 from .logging_backends import LoggerConfig, MetricsLogger, flatten_scalars, get_logger
 from .queue import ComputeQueue, new_batch_id
 from .snapshot import SnapshotManager
@@ -209,7 +209,10 @@ class Controller:
 
     def _save_exit_snapshot(self) -> None:
         with self.state.mode_lock:
-            self.snapshots.save(self.cfg.autosave_snapshot_name, self.state, self.trajectory)
+            self.snapshots.save(
+                self.cfg.autosave_snapshot_name, self.state, self.trajectory,
+                engine=self.train_engine, include_training=self.cfg.autosave_training_state,
+            )
 
     # ------------------------------------------------------------------ queue handler
     def _handle_task(self, task) -> Any:
@@ -298,6 +301,21 @@ class Controller:
                 self.metrics_logger.log_metrics(scalars, step=task.token)
             return {"loss": result.get("loss"), "components": components, "wall": wall}
         elif kind == "merge":
+            strategy = payload.get("strategy", "residual")
+            if strategy == "cpu_requantize":
+                from .consolidation import consolidate
+
+                report = consolidate(
+                    self.state, self.cfg.data_dir / "consolidation",
+                    preview=payload.get("preview", False),
+                    max_relative_update_error=payload.get("max_relative_update_error"),
+                    max_cpu_workspace_bytes=payload.get("max_cpu_workspace_bytes", 4 * 1024**3),
+                )
+                if report["applied"]:
+                    self.train_engine.reset_optimizer()
+                return report
+            if strategy != "residual" or payload.get("preview"):
+                raise ValueError("preview requires strategy=cpu_requantize; unknown merge strategy")
             self.state.merge_active_into_residual()
             self.train_engine.reset_optimizer()
             return {
@@ -307,14 +325,20 @@ class Controller:
             }
         elif kind == "snapshot_save":
             name = payload["name"]
-            self.snapshots.save(name, self.state, self.trajectory)
+            if payload.get("include_training"):
+                self.snapshots.save(name, self.state, self.trajectory,
+                                    engine=self.train_engine, include_training=True)
+            else:
+                self.snapshots.save(name, self.state, self.trajectory)
             return {"saved": name, "wall": time.time() - t0}
         elif kind == "snapshot_load":
             name = payload["name"]
-            manifest = self.snapshots.load(name, self.state)
-            # Adam m/v from the old trajectory no longer match the restored
-            # weights. Drop the optimizer so the next train step rebuilds fresh.
-            self.train_engine.reset_optimizer()
+            if payload.get("resume"):
+                manifest = self.snapshots.load(name, self.state, engine=self.train_engine, resume=True)
+            else:
+                manifest = self.snapshots.load(name, self.state)
+                # Weights-only restore deliberately starts fresh optimizer state.
+                self.train_engine.reset_optimizer()
             return {"loaded": name, "manifest": manifest, "wall": time.time() - t0}
         elif kind == "eval_greedy_rank":
             from .memorize import greedy_rank_fraction
@@ -789,28 +813,44 @@ class Controller:
             )
         return await self.submit_train(spec)
 
-    async def request_merge(self) -> dict[str, Any]:
+    async def request_merge(self, *, strategy: str = "residual", preview: bool = False,
+                            max_relative_update_error: float | None = None,
+                            max_cpu_workspace_bytes: int = 4 * 1024**3) -> dict[str, Any]:
         self._reject_if_shutting_down()
-        task = await self.queue.submit("merge", {})
+        task = await self.queue.submit("merge", {
+            "strategy": strategy, "preview": preview,
+            "max_relative_update_error": max_relative_update_error,
+            "max_cpu_workspace_bytes": max_cpu_workspace_bytes,
+        })
         result = await self.queue.wait_for(task, timeout=300.0)
+        if isinstance(result.error, ValueError):
+            raise InvalidInputError(str(result.error)) from result.error
+        if result.error is not None:
+            raise result.error
         return {
             "commit_token": task.token,
             "result": result.result,
             "error": str(result.error) if result.error else None,
         }
 
-    async def request_snapshot_save(self, name: str) -> dict[str, Any]:
+    async def request_snapshot_save(self, name: str, *, include_training: bool = False) -> dict[str, Any]:
         self._reject_if_shutting_down()
-        task = await self.queue.submit("snapshot_save", {"name": name})
+        task = await self.queue.submit("snapshot_save", {"name": name, "include_training": include_training})
         result = await self.queue.wait_for(task, timeout=300.0)
+        if isinstance(result.error, ValueError):
+            raise InvalidInputError(str(result.error)) from result.error
         if result.error is not None:
             raise result.error
         return {"commit_token": task.token, "result": result.result}
 
-    async def request_snapshot_load(self, name: str) -> dict[str, Any]:
+    async def request_snapshot_load(self, name: str, *, resume: bool = False) -> dict[str, Any]:
         self._reject_if_shutting_down()
-        task = await self.queue.submit("snapshot_load", {"name": name})
+        task = await self.queue.submit("snapshot_load", {"name": name, "resume": resume})
         result = await self.queue.wait_for(task, timeout=300.0)
+        if isinstance(result.error, ValueError):
+            raise InvalidInputError(str(result.error)) from result.error
+        if isinstance(result.error, FileNotFoundError):
+            raise NotFoundError(f"snapshot {name!r} or its payload is missing") from result.error
         if result.error is not None:
             raise result.error
         return {"commit_token": task.token, "result": result.result}
