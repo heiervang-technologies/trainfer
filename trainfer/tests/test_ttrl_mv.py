@@ -200,16 +200,16 @@ def test_pick_prompt_filters_to_verifier_claimed():
         assert "coins" in prompt
 
 
-def test_pick_prompt_respects_per_offset_cap():
+def test_pick_prompt_respects_per_prompt_cap():
     with tempfile.TemporaryDirectory() as td:
         log = TrajectoryLog(Path(td) / "t.jsonl")
         # Two qualifying math prompts; cap the newer one.
         off1 = _write_inference(log, prompt="What is 2 plus 3?")
-        off2 = _write_inference(log, prompt="How many coins if you have 4?")
+        _write_inference(log, prompt="How many coins if you have 4?")
         ctrl = _FakeController(log, _FakeQueue())
         sched = TTRLScheduler(ctrl, TTRLPolicy(min_prompts=1, max_per_prompt=1))
         # Simulate already-seen on the newer prompt.
-        sched._seen[off2] = 1
+        sched._seen["How many coins if you have 4?"] = 1
         choice = sched._pick_prompt()
         assert choice is not None
         offset, _prompt, _domain = choice
@@ -251,7 +251,7 @@ def test_maybe_run_one_samples_and_enqueues_majority():
 def test_maybe_run_one_skips_when_no_majority_extractable():
     with tempfile.TemporaryDirectory() as td:
         log = TrajectoryLog(Path(td) / "t.jsonl")
-        off = _write_inference(log, prompt="How many apples if Jane has 3?")
+        _write_inference(log, prompt="How many apples if Jane has 3?")
         # All rollouts have no extractable numeric answer.
         rollouts = ["no idea", "not sure", "pass", "hmm"]
         ctrl = _FakeController(log, _FakeQueue(), rollouts=rollouts)
@@ -263,7 +263,7 @@ def test_maybe_run_one_skips_when_no_majority_extractable():
         assert len(ctrl.submitted) == 0
         assert sched.stats["skipped_no_majority"] == 1
         # Burned a seen count so we don't immediately re-pick it forever.
-        assert sched._seen[off] == 1
+        assert sched._seen["How many apples if Jane has 3?"] == 1
 
 
 def test_maybe_run_one_bumps_seen_even_when_submit_raises():
@@ -272,7 +272,7 @@ def test_maybe_run_one_bumps_seen_even_when_submit_raises():
     # re-picking the same offset every poll and burns k rollouts each time.
     with tempfile.TemporaryDirectory() as td:
         log = TrajectoryLog(Path(td) / "t.jsonl")
-        off = _write_inference(log, prompt="How many apples if Jane has 3?")
+        _write_inference(log, prompt="How many apples if Jane has 3?")
         ctrl = _FakeController(
             log,
             _FakeQueue(),
@@ -288,9 +288,59 @@ def test_maybe_run_one_bumps_seen_even_when_submit_raises():
             TTRLPolicy(min_prompts=1, k_rollouts=2, max_per_prompt=2),
         )
         asyncio.run(sched._maybe_run_one())
-        assert sched._seen[off] == 1
+        assert sched._seen["How many apples if Jane has 3?"] == 1
         assert sched.stats["labels_enqueued"] == 0
 
+
+
+class _LoggingController(_FakeController):
+    """Fake whose ``generate`` logs an inference record, as the real one does."""
+
+    async def generate(self, messages, **kwargs):
+        result = await super().generate(messages, **kwargs)
+        self.trajectory.log_inference(
+            response_id=f"r_ttrl_{len(self.generate_calls)}",
+            prompt=str(messages[-1]["content"]),
+            response=result["raw"],
+            model_fingerprint="deadbeef",
+        )
+        return result
+
+
+def test_cap_binds_although_rollouts_are_logged_as_inference():
+    # Regression: Controller.generate logs every TTRL rollout as a fresh
+    # ``inference`` record with the same prompt. With an offset-keyed cap,
+    # the newest record (count 0) was picked on every idle poll, so one
+    # prompt was retrained indefinitely.
+    with tempfile.TemporaryDirectory() as td:
+        log = TrajectoryLog(Path(td) / "t.jsonl")
+        _write_inference(log, prompt="How many apples if Jane has 3?")
+        ctrl = _LoggingController(
+            log, _FakeQueue(), rollouts=["answer: 3", "the result is 3"]
+        )
+        sched = TTRLScheduler(
+            ctrl,
+            TTRLPolicy(min_prompts=1, k_rollouts=2, max_per_prompt=2),
+        )
+        for _ in range(5):
+            asyncio.run(sched._maybe_run_one())
+        assert len(ctrl.submitted) == 2
+        assert sched.stats["skipped_empty"] == 3
+
+
+def test_min_prompts_counts_distinct_prompts():
+    with tempfile.TemporaryDirectory() as td:
+        log = TrajectoryLog(Path(td) / "t.jsonl")
+        for _ in range(3):
+            _write_inference(log, prompt="How many apples if Jane has 3?")
+        sched = TTRLScheduler(
+            _FakeController(log, _FakeQueue()), TTRLPolicy(min_prompts=2)
+        )
+        assert sched._pick_prompt() is None
+        last = _write_inference(log, prompt="What is 2 plus 3?")
+        again = _write_inference(log, prompt="How many apples if Jane has 3?")
+        choice = sched._pick_prompt()
+        assert choice is not None and choice[0] == again != last
 
 def test_maybe_run_one_counts_empty_stdout_rollouts():
     # Two silent-no-op code rollouts — no majority possible; the
