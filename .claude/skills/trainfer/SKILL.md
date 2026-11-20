@@ -64,7 +64,7 @@ Corollaries:
 1. Add a class to `trainfer/logging_backends.py` implementing the `MetricsLogger` protocol (`log_params`, `log_metrics`, `close`).
 2. Catch every exception inside every method and `log.warning` — an adapter must never crash the train loop.
 3. Add the backend name to `_BACKENDS` at the bottom and to the docstring list at the top.
-4. Add a test in `tests/test_logging_backends.py` — import-guard so CI without the optional dep still passes.
+4. Add a test in `trainfer/tests/test_logging_backends.py` — import-guard so CI without the optional dep still passes.
 
 ### Adding a server route
 
