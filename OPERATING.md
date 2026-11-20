@@ -61,7 +61,7 @@ unsloth @ git+https://github.com/heiervang-technologies/ht-unsloth@<tag>
 **Tag cadence (tied to upstream-sync).** ht-unsloth cuts a tag named `ht-YYYY-MM-DD` after every successful rebase of `ht` onto upstream Unsloth's `main` — that boundary is the natural "stable point" where upstream just shipped a compatible state, our patches replay clean, CI is green. trainfer bumps its pin on the same beat. Expected cadence: 2–4 weeks when upstream is hot (Gemma releases, transformers point releases), 6–8 weeks when quiet. Goal: trainfer never lives more than one tag behind the last upstream-compatible point.
 
 **When to bump the pin:**
-1. ht-unsloth pushes a new `ht-YYYY-MM-DD` tag. Confirm `matmul_lora`'s signature still matches `_EXPECTED_MATMUL_LORA_PARAMS` in [`trainfer/state.py`](trainfer/state.py:60) — if it drifted, the signature-guard test (`trainfer/tests/test_matmul_lora_patch.py::test_signature_mismatch_skips_install`) is the canary.
+1. ht-unsloth pushes a new `ht-YYYY-MM-DD` tag. Confirm `matmul_lora`'s signature still matches `_EXPECTED_MATMUL_LORA_PARAMS` in [`trainfer/state.py`](trainfer/state.py) — if it drifted, the signature-guard test (`trainfer/tests/test_matmul_lora_patch.py::test_signature_mismatch_skips_install`) is the canary.
 2. Open a one-line PR bumping the `@<tag>` reference in `pyproject.toml` + `CLAUDE.md`. Keep `MIGRATION.md` at the historical SHA — that doc records what was current at relocation time, not the moving pin.
 3. Never `@ht` or `@main` in the pin — those are moving refs and break reproducibility. Always a tagged name (`ht-YYYY-MM-DD`) or, in emergencies, a frozen SHA.
 
