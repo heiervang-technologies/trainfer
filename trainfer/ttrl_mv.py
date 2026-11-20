@@ -52,8 +52,8 @@ class TTRLPolicy:
     k_rollouts: int = 4
     idle_threshold_s: float = 30.0
     poll_interval_s: float = 2.0
-    max_per_prompt: int = 3  # lifetime cap per inference offset
-    min_prompts: int = 3  # don't fire until the log has N candidates
+    max_per_prompt: int = 3  # per-process cap per distinct prompt text
+    min_prompts: int = 3  # don't fire until the log has N distinct candidates
     sampling_temperature: float = 0.8
     sampling_top_p: float = 0.95
 
@@ -162,11 +162,15 @@ class TTRLScheduler:
         self.policy = policy
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
-        # Inference-offset -> TTRL count. Parallel to IdleReplayScheduler:
-        # in-memory only, resets on restart — the cap claim is "per
-        # process", not "for the life of the log". Acceptable at v0; the
-        # trajectory log itself is the durable record.
-        self._seen: dict[int, int] = {}
+        # Prompt text -> TTRL count. Keyed by prompt, not by trajectory
+        # offset: every rollout goes through ``controller.generate``, which
+        # logs a fresh ``inference`` record with the same prompt. An
+        # offset-keyed cap never binds, because the newest record (a TTRL
+        # rollout with zero count) is picked on the next idle poll and the
+        # same prompt is retrained indefinitely. In-memory only, resets on
+        # restart — the cap claim is "per process", not "for the life of
+        # the log". The trajectory log itself is the durable record.
+        self._seen: dict[str, int] = {}
         self.stats = {
             "idle_checks": 0,
             "rollouts_sampled": 0,
@@ -240,7 +244,7 @@ class TTRLScheduler:
         )
         vote = _majority_from_keys([k for k, _ in keys_and_flags])
         if vote is None:
-            self._seen[offset] = self._seen.get(offset, 0) + 1
+            self._seen[prompt] = self._seen.get(prompt, 0) + 1
             self.stats["skipped_no_majority"] += 1
             return
         idx, _key = vote
@@ -252,10 +256,10 @@ class TTRLScheduler:
             "_ttrl_offset": offset,
         }
         # Burn the cap BEFORE submit. If submit raises we still want this
-        # offset to count against ``max_per_prompt`` — otherwise a broken
-        # submit path loops re-picking the same offset every poll and
+        # prompt to count against ``max_per_prompt`` — otherwise a broken
+        # submit path loops re-picking the same prompt every poll and
         # burns k rollouts each time until the underlying failure clears.
-        self._seen[offset] = self._seen.get(offset, 0) + 1
+        self._seen[prompt] = self._seen.get(prompt, 0) + 1
         try:
             await self.controller.submit_train(spec)
             self.stats["labels_enqueued"] += 1
@@ -265,33 +269,40 @@ class TTRLScheduler:
 
     # ------------------------------------------------------------------ pieces
     def _pick_prompt(self) -> tuple[int, str, str] | None:
-        """Most-recent verifier-claimed inference prompt under the per-offset cap.
+        """Most-recent verifier-claimed inference prompt under the per-prompt cap.
 
         Returns ``(offset, prompt, domain)`` or ``None`` when the log has
-        fewer than ``policy.min_prompts`` qualifying entries.
+        fewer than ``policy.min_prompts`` distinct qualifying prompts.
+        Repeated records of the same prompt (including TTRL's own logged
+        rollouts) collapse to one candidate at their latest offset.
 
         Rescans the full trajectory every poll (idle-gated, so the cost
         is only paid when the daemon is quiet). Fine at current scale;
         a ``since_offset`` cursor is the obvious optimization once the
         log grows past a few tens of thousands of inference records.
         """
-        candidates: list[tuple[int, str, str]] = []
+        # prompt -> (latest offset, domain). Insertion order is refreshed on
+        # every repeat so the dict's last entry is the most recent prompt.
+        candidates: dict[str, tuple[int, str]] = {}
+        domains: dict[str, str | None] = {}
         cap = self.policy.max_per_prompt
         for offset, rec in self.controller.trajectory.iter_with_offsets(
             kinds={"inference"},
         ):
-            if self._seen.get(offset, 0) >= cap:
-                continue
             prompt = rec.get("prompt") or ""
-            if not prompt:
+            if not prompt or self._seen.get(prompt, 0) >= cap:
                 continue
-            domain = select_verifier(prompt)
+            if prompt not in domains:
+                domains[prompt] = select_verifier(prompt)
+            domain = domains[prompt]
             if domain is None:
                 continue
-            candidates.append((offset, prompt, domain))
+            candidates.pop(prompt, None)
+            candidates[prompt] = (offset, domain)
         if len(candidates) < self.policy.min_prompts:
             return None
-        return candidates[-1]
+        prompt, (offset, domain) = next(reversed(candidates.items()))
+        return offset, prompt, domain
 
     async def _sample_rollouts(self, prompt: str) -> list[str]:
         """``k`` sequential ``controller.generate`` calls at sampling temperature."""
